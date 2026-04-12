@@ -1,0 +1,1397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>75 HARD — The Challenge</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #060608;
+    --surface: #0e0e12;
+    --surface-2: #16161c;
+    --border: #1e1e28;
+    --text: #eaeaef;
+    --muted: #9494a8;
+    --accent: #ff5a1f;
+    --accent-dim: rgba(255, 90, 31, 0.12);
+    --accent-glow: rgba(255, 90, 31, 0.35);
+    --danger: #ff1a40;
+    --danger-dim: rgba(255, 26, 64, 0.1);
+    --danger-glow: rgba(255, 26, 64, 0.4);
+    --success: #00e676;
+    --display: 'Bebas Neue', Impact, sans-serif;
+    --body: 'DM Sans', -apple-system, sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--body);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 16px;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  /* ── Grain overlay ── */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 256px 256px;
+  }
+
+  /* ── Scroll reveal ── */
+  .reveal {
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1),
+                transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .reveal.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* ═══════════════════════════════════════════
+     PASSWORD GATE
+     ═══════════════════════════════════════════ */
+  #gate {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000;
+    transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1),
+                visibility 0.6s;
+  }
+  #gate.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+
+  .gate-bg {
+    position: absolute; inset: 0;
+    overflow: hidden;
+  }
+  .gate-bg .ring {
+    position: absolute;
+    border-radius: 50%;
+    border: 1px solid var(--accent-dim);
+    animation: ringPulse 4s ease-in-out infinite;
+  }
+  .gate-bg .ring:nth-child(1) {
+    width: 300px; height: 300px;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    animation-delay: 0s;
+  }
+  .gate-bg .ring:nth-child(2) {
+    width: 500px; height: 500px;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    animation-delay: 0.8s;
+  }
+  .gate-bg .ring:nth-child(3) {
+    width: 700px; height: 700px;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    animation-delay: 1.6s;
+  }
+  @keyframes ringPulse {
+    0%, 100% { opacity: 0.15; transform: translate(-50%, -50%) scale(1); }
+    50% { opacity: 0.4; transform: translate(-50%, -50%) scale(1.05); }
+  }
+
+  .gate-box {
+    text-align: center;
+    padding: 2rem;
+    max-width: 400px;
+    width: 90%;
+    position: relative;
+    z-index: 2;
+  }
+  .gate-title {
+    font-family: var(--display);
+    font-size: 5rem;
+    letter-spacing: 0.06em;
+    line-height: 0.9;
+    margin-bottom: 0.1rem;
+    background: linear-gradient(135deg, var(--text) 0%, var(--accent) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .gate-subtitle {
+    font-family: var(--display);
+    font-size: 1.3rem;
+    letter-spacing: 0.35em;
+    color: var(--muted);
+    margin-bottom: 2rem;
+  }
+  .gate-box p {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 1rem;
+  }
+  .gate-input {
+    width: 100%;
+    padding: 1rem 1.2rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 1rem;
+    text-align: center;
+    letter-spacing: 0.2em;
+    outline: none;
+    transition: border-color 0.3s, box-shadow 0.3s;
+  }
+  .gate-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 20px var(--accent-dim);
+  }
+  .gate-input.error {
+    border-color: var(--danger);
+    animation: shake 0.4s;
+  }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-8px); }
+    75% { transform: translateX(8px); }
+  }
+
+  /* ═══════════════════════════════════════════
+     MAIN CONTENT
+     ═══════════════════════════════════════════ */
+  #content { display: none; }
+  #content.visible { display: block; }
+
+  .container {
+    max-width: 700px;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+  }
+
+  /* ── Hero ── */
+  .hero {
+    text-align: center;
+    padding: 4rem 0 3rem;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: -40%; left: 50%;
+    transform: translateX(-50%);
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, var(--accent-dim) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .hero-number {
+    font-family: var(--display);
+    font-size: clamp(6rem, 18vw, 10rem);
+    line-height: 0.85;
+    letter-spacing: 0.03em;
+    background: linear-gradient(180deg, var(--text) 30%, var(--accent) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    position: relative;
+    z-index: 1;
+    animation: heroIn 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .hero-hard {
+    font-family: var(--display);
+    font-size: clamp(2.2rem, 7vw, 3.8rem);
+    letter-spacing: 0.45em;
+    color: var(--accent);
+    margin-top: -0.2rem;
+    position: relative;
+    z-index: 1;
+    animation: heroIn 0.8s 0.15s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .hero-tagline {
+    font-size: 1rem;
+    color: var(--muted);
+    margin-top: 1rem;
+    letter-spacing: 0.08em;
+    position: relative;
+    z-index: 1;
+    animation: heroIn 0.8s 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes heroIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .hero-date {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 1.5rem;
+    padding: 0.65rem 1.5rem;
+    background: var(--accent-dim);
+    border: 1px solid rgba(255, 90, 31, 0.3);
+    border-radius: 50px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+    position: relative;
+    z-index: 1;
+    animation: heroIn 0.8s 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .hero-date .dot {
+    width: 8px; height: 8px;
+    background: var(--accent);
+    border-radius: 50%;
+    animation: blink 1.5s infinite;
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ── Countdown ── */
+  .countdown {
+    display: flex;
+    justify-content: center;
+    gap: 1.2rem;
+    margin-top: 1.5rem;
+    position: relative;
+    z-index: 1;
+    animation: heroIn 0.8s 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .cd-block {
+    text-align: center;
+  }
+  .cd-num {
+    font-family: var(--display);
+    font-size: 2.2rem;
+    color: var(--text);
+    line-height: 1;
+  }
+  .cd-label {
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+
+  /* ── Divider ── */
+  .divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border), transparent);
+    margin: 0;
+  }
+
+  /* ── Sections ── */
+  section {
+    padding: 3rem 0;
+  }
+
+  .section-label {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    letter-spacing: 0.35em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 0.4rem;
+  }
+  h2 {
+    font-family: var(--display);
+    font-size: clamp(2rem, 5vw, 2.8rem);
+    letter-spacing: 0.04em;
+    line-height: 1;
+    margin-bottom: 1rem;
+  }
+  .section-desc {
+    color: var(--muted);
+    font-size: 1rem;
+    max-width: 560px;
+    line-height: 1.7;
+  }
+
+  /* ═══════════════════════════════════════════
+     PROHIBITION BANNER
+     ═══════════════════════════════════════════ */
+  .prohibition {
+    padding: 3rem 0;
+    text-align: center;
+    position: relative;
+  }
+  .prohibition::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, var(--danger-dim), transparent, var(--danger-dim));
+    pointer-events: none;
+  }
+  .prohibition-items {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 1.5rem 2.5rem;
+    position: relative;
+    z-index: 1;
+  }
+  .prohibit {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .prohibit-icon {
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    background: var(--danger-dim);
+    border: 2px solid rgba(255, 26, 64, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    animation: prohibitPulse 3s ease-in-out infinite;
+  }
+  .prohibit-icon svg {
+    width: 32px; height: 32px;
+  }
+  /* Red slash through icon */
+  .prohibit-icon::after {
+    content: '';
+    position: absolute;
+    width: 56px; height: 3px;
+    background: var(--danger);
+    border-radius: 2px;
+    transform: rotate(-45deg);
+    box-shadow: 0 0 12px var(--danger-glow);
+  }
+  @keyframes prohibitPulse {
+    0%, 100% { box-shadow: 0 0 0 0 var(--danger-dim); }
+    50% { box-shadow: 0 0 25px 5px var(--danger-dim); }
+  }
+  .prohibit-text {
+    font-family: var(--display);
+    font-size: 1.1rem;
+    letter-spacing: 0.2em;
+    color: var(--danger);
+  }
+
+  /* ═══════════════════════════════════════════
+     RULE CARDS
+     ═══════════════════════════════════════════ */
+  .rules-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+
+  .rule-card {
+    display: flex;
+    gap: 1.25rem;
+    align-items: flex-start;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.5rem;
+    transition: border-color 0.3s, box-shadow 0.3s;
+  }
+  .rule-card:hover {
+    border-color: rgba(255, 90, 31, 0.25);
+    box-shadow: 0 4px 30px rgba(0,0,0,0.3);
+  }
+
+  .rule-icon {
+    flex-shrink: 0;
+    width: 56px; height: 56px;
+    background: var(--accent-dim);
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .rule-icon svg {
+    width: 28px; height: 28px;
+  }
+
+  .rule-body { flex: 1; min-width: 0; }
+  .rule-num {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    letter-spacing: 0.25em;
+    color: var(--accent);
+    margin-bottom: 0.15rem;
+  }
+  .rule-title {
+    font-weight: 700;
+    font-size: 1.05rem;
+    margin-bottom: 0.35rem;
+  }
+  .rule-detail {
+    color: var(--muted);
+    font-size: 0.92rem;
+    line-height: 1.7;
+  }
+  .rule-detail .emphasis {
+    color: var(--danger);
+    font-weight: 700;
+  }
+  .rule-detail strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  /* Icon animations */
+  @keyframes iconFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
+  }
+  @keyframes iconPulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.08); }
+  }
+  @keyframes dropFill {
+    0%, 100% { transform: translateY(0) scale(1); }
+    30% { transform: translateY(-2px) scale(1.05); }
+    60% { transform: translateY(1px) scale(0.97); }
+  }
+  @keyframes pageFlip {
+    0%, 100% { transform: rotateY(0deg); }
+    50% { transform: rotateY(15deg); }
+  }
+  @keyframes flash {
+    0%, 90%, 100% { opacity: 1; }
+    95% { opacity: 0.5; }
+  }
+  .rule-card:nth-child(1) .rule-icon svg { animation: iconPulse 3s ease-in-out infinite; }
+  .rule-card:nth-child(2) .rule-icon svg { animation: iconFloat 2.5s ease-in-out infinite; }
+  .rule-card:nth-child(3) .rule-icon svg { animation: dropFill 3s ease-in-out infinite; }
+  .rule-card:nth-child(4) .rule-icon svg { animation: pageFlip 4s ease-in-out infinite; }
+  .rule-card:nth-child(5) .rule-icon svg { animation: flash 5s ease-in-out infinite; }
+
+  /* ── Elimination Warning ── */
+  .elimination-warning {
+    margin-top: 1.5rem;
+    padding: 1.25rem 1.5rem;
+    background: var(--danger-dim);
+    border: 1px solid rgba(255, 26, 64, 0.2);
+    border-radius: 12px;
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+  }
+  .elimination-warning .warn-icon {
+    font-size: 1.4rem;
+    flex-shrink: 0;
+    line-height: 1.4;
+  }
+  .elimination-warning p {
+    font-size: 0.9rem;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .elimination-warning strong {
+    color: var(--danger);
+  }
+
+  /* ═══════════════════════════════════════════
+     TIMELINE — WHAT HAPPENS NEXT
+     ═══════════════════════════════════════════ */
+  .timeline {
+    margin-top: 2rem;
+    position: relative;
+    padding-left: 2.5rem;
+  }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 11px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: linear-gradient(180deg, var(--accent), var(--border));
+  }
+
+  .tl-step {
+    position: relative;
+    padding-bottom: 2rem;
+  }
+  .tl-step:last-child { padding-bottom: 0; }
+
+  .tl-dot {
+    position: absolute;
+    left: -2.5rem;
+    top: 0.15rem;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 2px solid var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+  }
+  .tl-dot .inner {
+    width: 8px; height: 8px;
+    background: var(--accent);
+    border-radius: 50%;
+  }
+  .tl-step.active .tl-dot {
+    background: var(--accent);
+    box-shadow: 0 0 15px var(--accent-glow);
+  }
+  .tl-step.active .tl-dot .inner {
+    background: #fff;
+  }
+
+  .tl-when {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    letter-spacing: 0.25em;
+    color: var(--accent);
+  }
+  .tl-title {
+    font-weight: 700;
+    font-size: 1rem;
+    margin: 0.15rem 0 0.25rem;
+  }
+  .tl-desc {
+    color: var(--muted);
+    font-size: 0.92rem;
+    line-height: 1.65;
+  }
+
+  /* ═══════════════════════════════════════════
+     TIERS
+     ═══════════════════════════════════════════ */
+  .tiers {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+  @media (max-width: 520px) {
+    .tiers { grid-template-columns: 1fr; }
+  }
+
+  .tier {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 2rem 1.5rem;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.3s, transform 0.2s;
+  }
+  .tier:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+  }
+  .tier::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .tier:hover::before { opacity: 1; }
+
+  .tier-badge {
+    font-family: var(--display);
+    font-size: 0.7rem;
+    letter-spacing: 0.3em;
+    color: var(--muted);
+    margin-bottom: 0.5rem;
+  }
+  .tier-amount {
+    font-family: var(--display);
+    font-size: 3.5rem;
+    line-height: 1;
+    background: linear-gradient(135deg, var(--text), var(--accent));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .tier-rate {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin: 0.3rem 0 1rem;
+  }
+  .tier-desc {
+    font-size: 0.85rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .tier.featured {
+    border-color: rgba(255, 90, 31, 0.3);
+    background: linear-gradient(180deg, rgba(255, 90, 31, 0.05), var(--surface));
+  }
+
+  /* ── Money / Payout ── */
+  .payout-grid {
+    display: grid;
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+  .payout-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+  }
+  .payout-card h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    margin-bottom: 0.4rem;
+  }
+  .payout-card p {
+    font-size: 0.88rem;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .payout-card strong { color: var(--text); }
+
+  .deposit-callout {
+    margin-top: 1.5rem;
+    padding: 1.5rem;
+    background: var(--accent-dim);
+    border: 1px solid rgba(255, 90, 31, 0.25);
+    border-radius: 12px;
+    text-align: center;
+  }
+  .deposit-callout .big {
+    font-family: var(--display);
+    font-size: 1.3rem;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    margin-bottom: 0.4rem;
+  }
+  .deposit-callout p {
+    font-size: 0.88rem;
+    color: var(--muted);
+  }
+  .deposit-callout strong { color: var(--text); }
+
+  /* ═══════════════════════════════════════════
+     HOW IT WORKS — DETAILS
+     ═══════════════════════════════════════════ */
+  .details-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+  }
+  @media (max-width: 520px) {
+    .details-grid { grid-template-columns: 1fr; }
+  }
+  .detail-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+  }
+  .detail-item .d-label {
+    font-size: 0.72rem;
+    font-family: var(--display);
+    letter-spacing: 0.2em;
+    color: var(--accent);
+    margin-bottom: 0.2rem;
+  }
+  .detail-item .d-value {
+    font-size: 0.88rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  /* ═══════════════════════════════════════════
+     FORM
+     ═══════════════════════════════════════════ */
+  .form-wrapper {
+    margin-top: 1.5rem;
+  }
+  .form-group {
+    margin-bottom: 1.25rem;
+  }
+  label {
+    display: block;
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-bottom: 0.4rem;
+    letter-spacing: 0.01em;
+  }
+  label .opt {
+    color: var(--muted);
+    font-weight: 400;
+    font-size: 0.78rem;
+    margin-left: 0.3rem;
+  }
+
+  input[type="text"],
+  input[type="email"],
+  input[type="tel"],
+  textarea,
+  select {
+    width: 100%;
+    padding: 0.85rem 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 0.95rem;
+    font-family: var(--body);
+    outline: none;
+    transition: border-color 0.3s, box-shadow 0.3s;
+  }
+  input:focus, textarea:focus, select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+  ::placeholder { color: var(--muted); opacity: 0.6; }
+  textarea { resize: vertical; min-height: 80px; }
+  select { cursor: pointer; }
+  select option { background: var(--surface); color: var(--text); }
+
+  .checkbox-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.7rem;
+    padding: 1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 0.75rem;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .checkbox-row:hover { border-color: rgba(255,255,255,0.1); }
+  .checkbox-row input[type="checkbox"] {
+    margin-top: 0.2rem;
+    accent-color: var(--accent);
+    width: 18px; height: 18px;
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+  .checkbox-row label {
+    font-weight: 400;
+    font-size: 0.92rem;
+    color: var(--muted);
+    cursor: pointer;
+    margin-bottom: 0;
+  }
+  .checkbox-row label strong { color: var(--text); }
+
+  .submit-btn {
+    width: 100%;
+    padding: 1.1rem;
+    background: linear-gradient(135deg, var(--accent), #ff8a50);
+    border: none;
+    border-radius: 12px;
+    color: #fff;
+    font-family: var(--display);
+    font-size: 1.3rem;
+    letter-spacing: 0.15em;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.3s;
+    position: relative;
+    overflow: hidden;
+  }
+  .submit-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 30px var(--accent-glow);
+  }
+  .submit-btn:active { transform: translateY(0); }
+  .submit-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  /* ── Success ── */
+  #success-msg {
+    display: none;
+    text-align: center;
+    padding: 3rem 1rem;
+  }
+  #success-msg.visible { display: block; }
+  .success-check {
+    width: 80px; height: 80px;
+    margin: 0 auto 1.5rem;
+    border-radius: 50%;
+    background: rgba(0, 230, 118, 0.1);
+    border: 2px solid var(--success);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: successPop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  @keyframes successPop {
+    from { transform: scale(0); }
+    to { transform: scale(1); }
+  }
+  .success-check svg { width: 36px; height: 36px; }
+  #success-msg h2 {
+    font-family: var(--display);
+    font-size: 2.2rem;
+    letter-spacing: 0.08em;
+    color: var(--success);
+    margin-bottom: 0.5rem;
+  }
+  #success-msg p {
+    color: var(--muted);
+    font-size: 0.95rem;
+    max-width: 400px;
+    margin: 0 auto;
+  }
+
+  /* ── Footer ── */
+  .footer {
+    text-align: center;
+    padding: 3rem 0 2rem;
+    border-top: 1px solid var(--border);
+    margin-top: 1rem;
+  }
+  .footer-logo {
+    font-family: var(--display);
+    font-size: 1.5rem;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    opacity: 0.5;
+  }
+  .footer p {
+    font-size: 0.75rem;
+    color: var(--muted);
+    opacity: 0.4;
+    margin-top: 0.3rem;
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══ PASSWORD GATE ═══ -->
+<div id="gate">
+  <div class="gate-bg">
+    <div class="ring"></div>
+    <div class="ring"></div>
+    <div class="ring"></div>
+  </div>
+  <div class="gate-box">
+    <div class="gate-title">75 HARD</div>
+    <div class="gate-subtitle">THE CHALLENGE</div>
+    <p>Invite only. Enter the password.</p>
+    <input type="password" class="gate-input" id="password-input" placeholder="Password" autocomplete="off" autofocus>
+  </div>
+</div>
+
+<!-- ═══ MAIN CONTENT ═══ -->
+<div id="content">
+  <div class="container">
+
+    <!-- HERO -->
+    <div class="hero">
+      <div class="hero-number">75</div>
+      <div class="hero-hard">HARD</div>
+      <div class="hero-tagline">75 days. No excuses. Real money on the line.</div>
+      <div class="hero-date">
+        <span class="dot"></span>
+        STARTS WEDNESDAY, APRIL 15
+      </div>
+      <div class="countdown" id="countdown">
+        <div class="cd-block"><div class="cd-num" id="cd-d">--</div><div class="cd-label">Days</div></div>
+        <div class="cd-block"><div class="cd-num" id="cd-h">--</div><div class="cd-label">Hours</div></div>
+        <div class="cd-block"><div class="cd-num" id="cd-m">--</div><div class="cd-label">Min</div></div>
+        <div class="cd-block"><div class="cd-num" id="cd-s">--</div><div class="cd-label">Sec</div></div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- WHAT IS THIS -->
+    <section class="reveal">
+      <div class="section-label">THE CHALLENGE</div>
+      <h2>This Is Not a Fitness Program</h2>
+      <p class="section-desc">
+        A 75-day mental toughness test with real financial stakes. Five daily non-negotiables, 75 straight days. Complete them all — you win. Miss even one — you're out and you lose money. Simple as that.
+      </p>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- PROHIBITION BANNER -->
+    <section class="prohibition reveal">
+      <div class="section-label" style="margin-bottom:1.5rem;">NON-NEGOTIABLE</div>
+      <div class="prohibition-items">
+        <div class="prohibit">
+          <div class="prohibit-icon">
+            <!-- Wine glass -->
+            <svg viewBox="0 0 32 32" fill="none" stroke="#ff1a40" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 3h12l-2 11a5 5 0 01-4 4 5 5 0 01-4-4L10 3z"/>
+              <line x1="16" y1="18" x2="16" y2="26"/>
+              <line x1="11" y1="26" x2="21" y2="26"/>
+            </svg>
+          </div>
+          <div class="prohibit-text">NO ALCOHOL</div>
+        </div>
+        <div class="prohibit">
+          <div class="prohibit-icon">
+            <!-- Pill -->
+            <svg viewBox="0 0 32 32" fill="none" stroke="#ff1a40" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="8" y="10" width="16" height="12" rx="6"/>
+              <line x1="16" y1="10" x2="16" y2="22"/>
+            </svg>
+          </div>
+          <div class="prohibit-text">NO DRUGS</div>
+        </div>
+        <div class="prohibit">
+          <div class="prohibit-icon">
+            <!-- Burger / cheat meal -->
+            <svg viewBox="0 0 32 32" fill="none" stroke="#ff1a40" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 16h20"/>
+              <path d="M7 16c0-5 4-9 9-9s9 4 9 9"/>
+              <path d="M6 16c0 2 1 4 3 4h14c2 0 3-2 3-4"/>
+              <path d="M6 20h20v2c0 1-1 2-2 2H8c-1 0-2-1-2-2v-2z"/>
+            </svg>
+          </div>
+          <div class="prohibit-text">NO CHEAT MEALS</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- THE RULES -->
+    <section class="reveal">
+      <div class="section-label">EVERY SINGLE DAY</div>
+      <h2>The 5 Rules</h2>
+      <p class="section-desc">Complete all five, every day, for 75 days straight. These are the proposed defaults — you can propose modifications when you sign up.</p>
+
+      <div class="rules-grid">
+        <!-- Rule 1: Diet -->
+        <div class="rule-card">
+          <div class="rule-icon">
+            <svg viewBox="0 0 32 32" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="16" cy="18" r="10"/>
+              <path d="M12 14l4 4 4-4"/>
+              <line x1="16" y1="8" x2="16" y2="14"/>
+              <line x1="16" y1="4" x2="16" y2="6"/>
+              <line x1="12" y1="5" x2="14" y2="7"/>
+              <line x1="20" y1="5" x2="18" y2="7"/>
+            </svg>
+          </div>
+          <div class="rule-body">
+            <div class="rule-num">RULE 01</div>
+            <div class="rule-title">Follow Your Diet — Zero Exceptions</div>
+            <div class="rule-detail">
+              Declare your diet before Day 1. No changes mid-challenge. <span class="emphasis">No cheat meals. No alcohol. No drugs.</span> You define it, you stick to it.
+            </div>
+          </div>
+        </div>
+
+        <!-- Rule 2: Workouts -->
+        <div class="rule-card">
+          <div class="rule-icon">
+            <svg viewBox="0 0 32 32" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="6" y1="16" x2="26" y2="16"/>
+              <rect x="3" y="12" width="4" height="8" rx="1"/>
+              <rect x="25" y="12" width="4" height="8" rx="1"/>
+              <rect x="8" y="10" width="4" height="12" rx="1"/>
+              <rect x="20" y="10" width="4" height="12" rx="1"/>
+            </svg>
+          </div>
+          <div class="rule-body">
+            <div class="rule-num">RULE 02</div>
+            <div class="rule-title">Two 45-Minute Workouts</div>
+            <div class="rule-detail">
+              Two separate sessions, 45 min each. <strong>One must be outdoors</strong> — parks, trails, sidewalks, courts. Intentional exercise only. A purposeful walk counts. A stroll does not.
+            </div>
+          </div>
+        </div>
+
+        <!-- Rule 3: Water -->
+        <div class="rule-card">
+          <div class="rule-icon">
+            <svg viewBox="0 0 32 32" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M16 4c0 0-8 8-8 15a8 8 0 0016 0c0-7-8-15-8-15z"/>
+              <path d="M12 22a4 4 0 004 4" opacity="0.5"/>
+            </svg>
+          </div>
+          <div class="rule-body">
+            <div class="rule-num">RULE 03</div>
+            <div class="rule-title">Drink One Gallon of Water</div>
+            <div class="rule-detail">
+              128 oz (one gallon) every day. Coffee and tea <strong>don't count</strong>. Just water.
+            </div>
+          </div>
+        </div>
+
+        <!-- Rule 4: Reading -->
+        <div class="rule-card">
+          <div class="rule-icon">
+            <svg viewBox="0 0 32 32" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 6v20l12-4 12 4V6L16 10 4 6z"/>
+              <line x1="16" y1="10" x2="16" y2="26"/>
+            </svg>
+          </div>
+          <div class="rule-body">
+            <div class="rule-num">RULE 04</div>
+            <div class="rule-title">Read 10 Pages of Non-Fiction</div>
+            <div class="rule-detail">
+              Physical book or e-reader — 10 pages minimum. <strong>Audiobooks don't count.</strong> Log what you read daily.
+            </div>
+          </div>
+        </div>
+
+        <!-- Rule 5: Photo -->
+        <div class="rule-card">
+          <div class="rule-icon">
+            <svg viewBox="0 0 32 32" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="4" y="8" width="24" height="18" rx="3"/>
+              <circle cx="16" cy="17" r="5"/>
+              <circle cx="16" cy="17" r="2"/>
+              <path d="M10 8V6h12v2"/>
+            </svg>
+          </div>
+          <div class="rule-body">
+            <div class="rule-num">RULE 05</div>
+            <div class="rule-title">Take a Daily Progress Photo</div>
+            <div class="rule-detail">
+              One timestamped photo every day. For your own accountability — doesn't need to be shared.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Elimination warning -->
+      <div class="elimination-warning">
+        <div class="warn-icon">&#9888;</div>
+        <p>
+          <strong>Miss any rule on any day = eliminated.</strong>
+          No grace days. No make-ups. No exceptions. You can propose rule modifications when you sign up.
+        </p>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- HOW IT WORKS -->
+    <section class="reveal">
+      <div class="section-label">THE FINE PRINT</div>
+      <h2>How It Works</h2>
+      <div class="details-grid">
+        <div class="detail-item">
+          <div class="d-label">DAY RESETS</div>
+          <div class="d-value">Midnight, your local time</div>
+        </div>
+        <div class="detail-item">
+          <div class="d-label">DURATION</div>
+          <div class="d-value">75 days — April 15 to June 28</div>
+        </div>
+        <div class="detail-item">
+          <div class="d-label">VERIFICATION</div>
+          <div class="d-value">Honor system + daily check-ins + honor pledge</div>
+        </div>
+        <div class="detail-item">
+          <div class="d-label">COMMUNICATION</div>
+          <div class="d-value">Group chat for daily check-ins</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- WHAT HAPPENS NEXT — TIMELINE -->
+    <section class="reveal">
+      <div class="section-label">THE PROCESS</div>
+      <h2>What Happens Next</h2>
+      <p class="section-desc">Here's exactly what to expect after you sign up.</p>
+
+      <div class="timeline">
+        <div class="tl-step active">
+          <div class="tl-dot"><div class="inner"></div></div>
+          <div class="tl-when">TODAY — SUNDAY, APRIL 12</div>
+          <div class="tl-title">Sign Up Below</div>
+          <div class="tl-desc">Confirm your interest, choose your tier, propose any rule changes.</div>
+        </div>
+
+        <div class="tl-step">
+          <div class="tl-dot"><div class="inner"></div></div>
+          <div class="tl-when">MONDAY, APRIL 13</div>
+          <div class="tl-title">Pay Your Deposit</div>
+          <div class="tl-desc">Send your deposit ($75 or $750) via Venmo or Zelle. Details will be sent after sign-up. <strong style="color:var(--accent)">No deposit = no entry.</strong></div>
+        </div>
+
+        <div class="tl-step">
+          <div class="tl-dot"><div class="inner"></div></div>
+          <div class="tl-when">MON — TUE, APRIL 13 – 14</div>
+          <div class="tl-title">Vote on Final Rules</div>
+          <div class="tl-desc">We compile proposals and vote. Rules locked by Tuesday night. Declare your diet.</div>
+        </div>
+
+        <div class="tl-step">
+          <div class="tl-dot"><div class="inner"></div></div>
+          <div class="tl-when">WEDNESDAY, APRIL 15</div>
+          <div class="tl-title">Day 1 — It Begins</div>
+          <div class="tl-desc">Midnight. 75 days, no breaks. Let's go.</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- TIERS -->
+    <section class="reveal">
+      <div class="section-label">SKIN IN THE GAME</div>
+      <h2>Choose Your Tier</h2>
+      <p class="section-desc">Two levels. Same rules. The only difference is how much you're willing to put on the line.</p>
+
+      <div class="tiers">
+        <div class="tier">
+          <div class="tier-badge">STANDARD</div>
+          <div class="tier-amount">$75</div>
+          <div class="tier-rate">$1 per day</div>
+          <div class="tier-desc">Enough to sting if you quit. Real commitment, approachable entry.</div>
+        </div>
+        <div class="tier featured">
+          <div class="tier-badge">HIGH STAKES</div>
+          <div class="tier-amount">$750</div>
+          <div class="tier-rate">$10 per day</div>
+          <div class="tier-desc">For people who want real pressure. The kind of money that keeps you honest.</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- THE MONEY -->
+    <section class="reveal">
+      <div class="section-label">THE MONEY</div>
+      <h2>Where It Goes</h2>
+      <p class="section-desc">All deposits go into a <strong>separate, dedicated account</strong> — completely untouched until the challenge ends on June 28.</p>
+
+      <div class="payout-grid">
+        <div class="payout-card">
+          <h3>IF YOU COMPLETE ALL 75 DAYS</h3>
+          <p>You get your <strong>full deposit back</strong> plus your share of the prize pool. You earned it.</p>
+        </div>
+        <div class="payout-card">
+          <h3>IF YOU'RE ELIMINATED ON DAY X</h3>
+          <p>You get <strong>$1/day back</strong> ($10/day for $750 tier) for each day you completed. The remainder goes into the prize pool for the winners.</p>
+        </div>
+        <div class="payout-card">
+          <h3>EXAMPLE — $75 TIER</h3>
+          <p>Fail on Day 30 → you get <strong>$30 back</strong>, $45 goes to the prize pool. Finish all 75? Full refund <strong>plus</strong> a split of everyone's forfeit money.</p>
+        </div>
+      </div>
+
+      <div class="deposit-callout">
+        <div class="big">DEPOSIT REQUIRED BEFORE APRIL 15</div>
+        <p>Pay via <strong>Venmo or Zelle</strong>. Details sent after sign-up. No deposit, no entry — no exceptions.</p>
+      </div>
+    </section>
+
+    <div class="divider"></div>
+
+    <!-- SIGN UP FORM -->
+    <section class="reveal">
+      <div class="section-label">STEP 1</div>
+      <h2>I'm In</h2>
+      <p class="section-desc">Confirm your interest. Deposit details come next — but if you fill this out, we're counting on you.</p>
+
+      <div class="form-wrapper">
+        <form id="signup-form" action="https://formspree.io/bsplaza@outlook.com" method="POST">
+          <input type="hidden" name="_subject" value="75 HARD — New Sign-Up">
+          <input type="hidden" name="_captcha" value="false">
+
+          <div class="form-group">
+            <label>Full Name</label>
+            <input type="text" name="name" required placeholder="Your name">
+          </div>
+
+          <div class="form-group">
+            <label>Phone Number</label>
+            <input type="tel" name="phone" required placeholder="For the group chat">
+          </div>
+
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" name="email" required placeholder="you@email.com">
+          </div>
+
+          <div class="form-group">
+            <label>Which Tier?</label>
+            <select name="tier" required>
+              <option value="" disabled selected>Choose your commitment level</option>
+              <option value="$75">$75 — Standard ($1/day)</option>
+              <option value="$750">$750 — High Stakes ($10/day)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Rule Modification Proposals <span class="opt">Optional</span></label>
+            <textarea name="rule_proposals" placeholder="Think a rule should change? Propose it here. We'll compile and vote as a group."></textarea>
+          </div>
+
+          <div class="form-group">
+            <label>Questions, Feedback, or Ideas <span class="opt">Optional</span></label>
+            <textarea name="feedback" placeholder="Anything else — concerns, suggestions, ideas for the challenge."></textarea>
+          </div>
+
+          <div class="checkbox-row">
+            <input type="checkbox" id="confirm" required>
+            <label for="confirm">I understand this challenge starts <strong>Wednesday, April 15</strong> and runs for <strong>75 consecutive days</strong> through June 28. I'm committing to show up.</label>
+          </div>
+
+          <div class="checkbox-row">
+            <input type="checkbox" id="honor" required>
+            <label for="honor">I pledge to be <strong>completely honest</strong> about my daily completion. This challenge runs on trust and honor — if I say I did it, I did it.</label>
+          </div>
+
+          <div class="checkbox-row">
+            <input type="checkbox" id="deposit" required>
+            <label for="deposit">I understand that my <strong>deposit must be paid before April 15</strong> via Venmo or Zelle. No deposit = no entry.</label>
+          </div>
+
+          <button type="submit" class="submit-btn">COUNT ME IN</button>
+        </form>
+
+        <div id="success-msg">
+          <div class="success-check">
+            <svg viewBox="0 0 36 36" fill="none" stroke="var(--success)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9,18 16,25 27,12"/>
+            </svg>
+          </div>
+          <h2>YOU'RE LOCKED IN</h2>
+          <p>Deposit details and the group chat link are coming your way. Get ready — April 15 is right around the corner.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- FOOTER -->
+    <div class="footer">
+      <div class="footer-logo">75 HARD</div>
+      <p>Private &middot; Invite Only &middot; April 15 – June 28, 2026</p>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // ── Password Gate ──
+  const PASS = 'lockedin';
+  const gate = document.getElementById('gate');
+  const content = document.getElementById('content');
+  const pwInput = document.getElementById('password-input');
+
+  if (sessionStorage.getItem('75hard') === '1') {
+    gate.classList.add('hidden');
+    content.classList.add('visible');
+    initPage();
+  }
+
+  pwInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      if (pwInput.value.toLowerCase().trim() === PASS) {
+        sessionStorage.setItem('75hard', '1');
+        gate.classList.add('hidden');
+        content.classList.add('visible');
+        initPage();
+      } else {
+        pwInput.classList.add('error');
+        pwInput.value = '';
+        setTimeout(() => pwInput.classList.remove('error'), 400);
+      }
+    }
+  });
+
+  function initPage() {
+    startCountdown();
+    initReveal();
+  }
+
+  // ── Countdown ──
+  function startCountdown() {
+    const target = new Date('2026-04-15T00:00:00').getTime();
+    function tick() {
+      const now = Date.now();
+      const diff = Math.max(0, target - now);
+      const d = Math.floor(diff / 86400000);
+      const h = Math.floor((diff % 86400000) / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      document.getElementById('cd-d').textContent = d;
+      document.getElementById('cd-h').textContent = String(h).padStart(2, '0');
+      document.getElementById('cd-m').textContent = String(m).padStart(2, '0');
+      document.getElementById('cd-s').textContent = String(s).padStart(2, '0');
+    }
+    tick();
+    setInterval(tick, 1000);
+  }
+
+  // ── Scroll Reveal ──
+  function initReveal() {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry, i) => {
+          if (entry.isIntersecting) {
+            setTimeout(() => entry.target.classList.add('visible'), i * 80);
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.12, rootMargin: '0px 0px -40px 0px' }
+    );
+    document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+  }
+
+  // ── Form Submission ──
+  const form = document.getElementById('signup-form');
+  const successMsg = document.getElementById('success-msg');
+
+  form.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const btn = form.querySelector('.submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'SUBMITTING...';
+
+    try {
+      const resp = await fetch(form.action, {
+        method: 'POST',
+        body: new FormData(form),
+        headers: { 'Accept': 'application/json' }
+      });
+
+      if (resp.ok) {
+        form.style.display = 'none';
+        successMsg.classList.add('visible');
+        successMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else {
+        btn.disabled = false;
+        btn.textContent = 'COUNT ME IN';
+        window.alert('Something went wrong. Try again or reach out directly.');
+      }
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'COUNT ME IN';
+      window.alert('Network error — check your connection and try again.');
+    }
+  });
+</script>
+
+</body>
+</html>
