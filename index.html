@@ -1364,6 +1364,7 @@
   // ── Form Submission ──
   const form = document.getElementById('signup-form');
   const successMsg = document.getElementById('success-msg');
+  const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbwfiRYotFJjl3n8kAjvtmhfSGS5SJ3BrgK6bSGLG1gSc3tP8KYfOBVPy2GUQ3WMrJzOgg/exec';
 
   form.addEventListener('submit', async function(e) {
     e.preventDefault();
@@ -1371,22 +1372,35 @@
     btn.disabled = true;
     btn.textContent = 'SUBMITTING...';
 
-    try {
-      const resp = await fetch(form.action, {
-        method: 'POST',
-        body: new FormData(form),
-        headers: { 'Accept': 'application/json' }
-      });
+    const data = {
+      name: form.name.value,
+      phone: form.phone.value,
+      email: form.email.value,
+      tier: form.tier.value,
+      rule_proposals: form.rule_proposals.value,
+      feedback: form.feedback.value
+    };
 
-      if (resp.ok) {
-        form.style.display = 'none';
-        successMsg.classList.add('visible');
-        successMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      } else {
-        btn.disabled = false;
-        btn.textContent = 'COUNT ME IN';
-        window.alert('Something went wrong. Try again or reach out directly.');
-      }
+    try {
+      // Send to Google Sheets (primary) and email (backup) in parallel
+      const [sheetsResp] = await Promise.allSettled([
+        fetch(SHEETS_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        }),
+        fetch(form.action, {
+          method: 'POST',
+          body: new FormData(form),
+          headers: { 'Accept': 'application/json' }
+        })
+      ]);
+
+      // no-cors always returns opaque, so trust it went through
+      form.style.display = 'none';
+      successMsg.classList.add('visible');
+      successMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } catch (err) {
       btn.disabled = false;
       btn.textContent = 'COUNT ME IN';
