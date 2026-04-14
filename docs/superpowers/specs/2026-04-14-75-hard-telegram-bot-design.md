@@ -88,6 +88,8 @@ python-dotenv
       diet.py            # Diet confirmation handler
       scoreboard.py      # Evening scoreboard
       admin.py           # /fail, /status, manual commands
+      feedback.py        # /feedback, /bug, /suggest handlers
+      commands.py        # /card, /water set, /workout_undo, /stats, /help
     jobs/
       __init__.py
       scheduler.py       # Morning card, evening scoreboard, 11 PM nudge
@@ -116,6 +118,7 @@ python-dotenv
 | active | BOOLEAN DEFAULT TRUE | Still in the challenge |
 | failed_day | INTEGER | Day they failed (null if active) |
 | dm_registered | BOOLEAN DEFAULT FALSE | Has the user /started the bot in DM |
+| current_book | TEXT | Currently reading (persists across days) |
 | created_at | TIMESTAMP | Registration time |
 
 ### daily_checkins
@@ -140,6 +143,28 @@ python-dotenv
 | photo_done | BOOLEAN DEFAULT FALSE | |
 | photo_file_id | TEXT | Telegram file ID for the photo |
 | completed_at | TIMESTAMP | When all 5 tasks were done (null if incomplete) |
+
+### books
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PRIMARY KEY | Auto-increment |
+| telegram_id | INTEGER | FK to users |
+| title | TEXT NOT NULL | Book title |
+| started_day | INTEGER | Day number started |
+| finished_day | INTEGER | Day number finished (null if currently reading) |
+
+### feedback
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER PRIMARY KEY | Auto-increment |
+| telegram_id | INTEGER | FK to users (null if anonymous) |
+| type | TEXT NOT NULL | "feedback", "bug", or "suggestion" |
+| text | TEXT NOT NULL | The feedback content |
+| context | TEXT | Bot state context (current day, last action, etc.) |
+| status | TEXT DEFAULT "new" | "new", "acknowledged", "implemented", "wontfix" |
+| created_at | TIMESTAMP | When submitted |
 
 ### daily_cards
 
@@ -261,24 +286,40 @@ If both workouts are done, the confirmation says:
 
 **Flow (ConversationHandler, in DM):**
 1. Bot answers callback in group: popup "Check your DMs 📖"
-2. Bot DMs user: "What book are you reading?"
-3. User types: `Atomic Habits`
+2. If user has a `current_book` set:
+   - Bot DMs: "Still reading 'Atomic Habits'?" `[Yes, same book]` `[Started a new book]`
+   - If **same book** → skip to step 4
+   - If **new book** → bot marks old book as finished (`finished_day = today`), goes to step 3
+3. Bot DMs: "What book are you reading?"
+   - User types book title
+   - Bot creates new `books` row, sets `current_book` on user
 4. Bot DMs: "Share a takeaway, favorite quote, or what stuck with you:"
 5. User types their takeaway
 6. Bot updates the daily card (📖 ✅)
 7. Bot posts a **reading card** in the group (this is the one separate message worth posting):
 
 ```
-📖 Bryan is reading "Atomic Habits"
+📖 Bryan is reading "Atomic Habits" (day 12 with this book)
 
 "You don't rise to the level of your goals. You fall to the level of your systems."
 
 Bryan's take: This is why willpower-based approaches always fail.
 ```
 
+When someone finishes a book and starts a new one:
+```
+📖 Bryan finished "Atomic Habits" after 20 days! Now starting "Can't Hurt Me"
+
+"They don't know me, son."
+
+Bryan's take: First chapter already hitting different.
+```
+
 **Why this posts as a separate message:** Reading cards are the richest content in the chat. They create conversation, inspire others, and build a collective reading journal over 75 days. They earn their space.
 
 **If the user has already logged reading for today:** Bot DMs: "You already logged reading today! If you want to update your entry, type /reread."
+
+**Book stats (Phase C):** "Bryan read 4 books during 75 Hard: Atomic Habits (20 days), Can't Hurt Me (18 days), Deep Work (22 days), The Hard Thing About Hard Things (15 days)."
 
 ### Interaction: Progress Photo
 
@@ -300,11 +341,11 @@ Bryan's take: This is why willpower-based approaches always fail.
 **Trigger:** User taps `[🍽️ Diet ✓]` on the daily card.
 
 **Flow:**
-1. Bot identifies user, updates database
-2. Edits daily card (🍽️ ✅)
-3. Answers callback with popup: "Diet logged ✅"
+1. Bot identifies user, checks current state in database
+2. If not yet confirmed → sets `diet_done = TRUE`, edits daily card (🍽️ ✅), popup: "Diet logged ✅"
+3. If already confirmed → sets `diet_done = FALSE`, edits daily card (🍽️ ⬜), popup: "Diet un-logged. Re-confirm when ready."
 
-**One tap. No conversation. No DM.** This is the simplest interaction.
+**This is a toggle.** One tap confirms, tapping again un-confirms. This matters because honesty is the foundation of the challenge — if someone confirms at 2 PM then has a cheat meal at dinner, they can undo it. No conversation. No DM. Just a tap.
 
 ## Scheduled Jobs
 
@@ -447,8 +488,23 @@ Q: What if I fail?
 A: DM me /fail. You'll get $1 back for each day completed. The rest
    stays in the prize pool. You stay in the group to cheer everyone on.
 
+Q: I tapped water too many times. How do I fix it?
+A: Type /water set [number] to correct your cup count.
+
+Q: I logged the wrong workout. How do I fix it?
+A: Type /workout_undo to clear your last workout, then re-log it.
+
 Q: Can I see my stats?
 A: DM me /stats for your personal progress breakdown.
+
+Q: I have an idea to make this bot better.
+A: Type /suggest [your idea] and Bryan will see it.
+
+Q: Something is broken.
+A: Type /bug [what happened] and Bryan will fix it.
+
+Q: Where is today's card? I can't find it.
+A: Type /card and I'll link you to it. It's also pinned.
 
 Q: What if the bot goes down?
 A: Bryan will fix it. Log your tasks when it's back up. Honor system
@@ -472,6 +528,13 @@ April 15, 2026 → June 28, 2026
 - At noon, previous day locks. Any unchecked tasks are permanently incomplete
 - The 11 PM DM nudge is the primary reminder
 
+### Tapping an Old Card
+
+Yesterday's card is still in the chat. Someone taps a button on it.
+- Bot checks if `message_id` matches today's card
+- If it's yesterday's card AND before noon (grace period) → allow the action, apply to previous day's checkin
+- If past grace period → callback answer: "This card has expired. Use today's card ☝️ or type /card to jump to it."
+
 ### Failure
 
 1. User DMs bot `/fail`
@@ -487,6 +550,7 @@ April 15, 2026 → June 28, 2026
    Prize pool: $[total] · [N] still standing
    ```
 6. User stays in the group. Their row disappears from the daily card.
+7. User can still chat, cheer others on, and use `/feedback` or `/suggest`
 
 ### Race Conditions (Water Button)
 
@@ -497,6 +561,28 @@ Two users tap `[💧 Water +1]` at the same time:
 4. Both attempt to edit the message
 5. First edit succeeds. Second edit may succeed (different content) or fail with "message not modified"
 6. On failure: re-read all counts from DB, re-render card, retry edit once
+
+### Water Corrections
+
+User accidentally over-taps or miscounts:
+- Type `/water set 12` in the group or DM to manually set cup count
+- Bot updates the card accordingly
+- Prevents needing a -1 button that clutters the card
+
+### Workout Corrections
+
+User logs the wrong workout type or location:
+- Type `/workout_undo` to clear the last logged workout for today
+- Re-log with the correct info via the card button
+- Bryan can also fix via `/admin_mark [user] [task]`
+
+### Photo Replacement
+
+User wants to retake their progress photo:
+- Just send another photo to the bot in DMs
+- Latest photo overwrites the previous `file_id` for that day
+- Bot confirms: "Day X photo updated! 📸"
+- Non-photo files (documents, stickers) are rejected: "I need a photo!"
 
 ### Bot Downtime
 
@@ -510,6 +596,96 @@ If the bot goes down and comes back up:
 
 If a user taps [📖 Read] or [📸 Photo] but hasn't DM'd the bot:
 - Bot answers callback: "I can't DM you yet! Tap t.me/[bot_username] to start a chat with me first."
+
+### Group Migration
+
+Telegram auto-migrates groups to supergroups when certain features are enabled. This changes the `chat_id`.
+- Bot handles `MigrateToChatId` update type
+- Stores the new chat_id and continues operating
+- No user action needed
+
+### Finding the Daily Card
+
+Group conversation buries the card:
+- The card is **pinned** each morning (replacing yesterday's pin)
+- Users can type `/card` in the group → bot replies with a deeplink to the pinned message
+
+### Day 75 — End of Challenge
+
+Instead of the normal daily card, bot posts a celebration message:
+- Final scoreboard: who completed all 75 days
+- Stats: total workouts, total water consumed, books read per person
+- Prize pool distribution calculation
+- Prompt for final progress photo
+- Bot enters dormant mode (no more scheduled messages)
+
+### Before Day 1 / After Day 75
+
+Bot is in dormant mode. No daily cards, no scheduled jobs. Only responds to `/help`, `/stats`, and admin commands.
+
+## Feedback & Improvement System
+
+### Why This Matters
+
+This bot runs for 75 days. Day 1 will surface problems nobody predicted. Week 2 will reveal friction that wasn't obvious. The bot needs a built-in feedback loop so issues get captured, not lost in group chat noise.
+
+### User Commands
+
+| Command | Where | Description |
+|---------|-------|-------------|
+| `/feedback <text>` | Group or DM | General feedback on the bot experience |
+| `/bug <text>` | Group or DM | Report something broken |
+| `/suggest <text>` | Group or DM | Request a feature or improvement |
+
+All three commands:
+1. Store the entry in the `feedback` table with user ID, type, text, timestamp
+2. Auto-capture context: current day number, user's checkin state, last action
+3. Confirm to user: "Got it — logged your [feedback/bug/suggestion]. Bryan will see it."
+4. In the group, bot reacts to the message with 👍 (lightweight acknowledgment, no extra message)
+
+### Admin Review
+
+Bryan can review feedback anytime:
+
+| Command | Description |
+|---------|-------------|
+| `/admin_feedback` | Show all unresolved feedback, newest first |
+| `/admin_feedback bugs` | Show only bugs |
+| `/admin_feedback suggestions` | Show only suggestions |
+| `/admin_resolve [id] [status]` | Mark as "acknowledged", "implemented", or "wontfix" |
+
+### Improvement Workflow
+
+When Bryan wants to act on feedback:
+
+1. **Review:** `/admin_feedback` in Telegram to see what's pending
+2. **Triage:** Decide what to fix/build next
+3. **Build:** Open a Claude Code session in the bot project directory. The feedback table serves as the backlog — Bryan can reference specific feedback IDs.
+4. **Deploy:** `flyctl deploy` pushes the update. Bot continues running with the new code.
+5. **Close the loop:** `/admin_resolve [id] implemented` — bot DMs the user who submitted it: "Your suggestion was implemented! Thanks for making the bot better."
+
+### Weekly Feedback Digest (Phase C)
+
+On Sunday nights, bot auto-generates a summary of the week's feedback for Bryan:
+```
+📋 WEEKLY FEEDBACK DIGEST — Week 2
+
+3 new suggestions:
+  #12 Kat: "Can we see a weekly reading list?"
+  #13 Dev: "Water tracker should show time of last drink"
+  #14 Gaurav: "Add a way to log stretching separately"
+
+1 bug:
+  #15 Yumna: "Workout button didn't respond at 6 AM"
+
+2 resolved this week:
+  #10 ✅ implemented — Added /water set command
+  #11 ✅ wontfix — "Add TikTok integration" (out of scope)
+```
+
+### Design Principle
+
+The feedback system should feel effortless for users ("just type /suggest and forget") and organized for Bryan (structured table, admin commands, no digging through chat history). The bot is its own issue tracker.
 
 ## Admin Commands
 
