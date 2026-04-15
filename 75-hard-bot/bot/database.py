@@ -123,6 +123,26 @@ class Database:
         ) as cur:
             return await cur.fetchall()
 
+    async def get_all_users(self) -> list[aiosqlite.Row]:
+        """Return all users regardless of status."""
+        async with self._conn.execute("SELECT * FROM users") as cur:
+            return await cur.fetchall()
+
+    async def get_user_by_name(self, name: str) -> aiosqlite.Row | None:
+        """Look up a user by their display name."""
+        async with self._conn.execute(
+            "SELECT * FROM users WHERE name = ?", (name,)
+        ) as cur:
+            return await cur.fetchone()
+
+    async def update_telegram_id(self, name: str, telegram_id: int) -> None:
+        """Re-map a participant name to a new telegram_id and mark DM-registered."""
+        await self._conn.execute(
+            "UPDATE users SET telegram_id = ?, dm_registered = 1 WHERE name = ?",
+            (telegram_id, name),
+        )
+        await self._conn.commit()
+
     async def register_dm(self, telegram_id: int) -> None:
         """Mark that this user has started a DM with the bot."""
         await self._conn.execute(
