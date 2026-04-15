@@ -227,6 +227,51 @@ async def reread_command(
         await update.message.reply_text(READ_ASK_BOOK)
 
 
+async def setbook_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/setbook <title> — set or update your current book anytime."""
+    db = context.bot_data["db"]
+    user = await db.get_user(update.effective_user.id)
+    if not user:
+        await update.message.reply_text("Register first! DM me /start")
+        return
+
+    if not context.args:
+        if user["current_book"]:
+            await update.message.reply_text(f'Your current book is "{user["current_book"]}". To change it: /setbook <new title>')
+        else:
+            await update.message.reply_text("Usage: /setbook <book title>")
+        return
+
+    title = " ".join(context.args)
+    day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+
+    if user["current_book"]:
+        await db.finish_book(update.effective_user.id, finished_day=day)
+
+    await db.set_current_book(update.effective_user.id, title, started_day=day)
+    await update.message.reply_text(f'Book set to "{title}" 📖')
+
+
+async def setdiet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/setdiet <plan> — set or update your diet plan anytime."""
+    db = context.bot_data["db"]
+    user = await db.get_user(update.effective_user.id)
+    if not user:
+        await update.message.reply_text("Register first! DM me /start")
+        return
+
+    if not context.args:
+        if user.get("diet_plan"):
+            await update.message.reply_text(f'Your current diet is "{user["diet_plan"]}". To change it: /setdiet <new plan>')
+        else:
+            await update.message.reply_text("Usage: /setdiet <your diet plan>")
+        return
+
+    plan = " ".join(context.args)
+    await db.set_diet_plan(update.effective_user.id, plan)
+    await update.message.reply_text(f'Diet set to "{plan}" 🍽️')
+
+
 def get_reading_handlers() -> list:
     """Return all reading-related callback handlers."""
     return [
@@ -234,4 +279,6 @@ def get_reading_handlers() -> list:
         CallbackQueryHandler(read_same_callback, pattern=f"^{CB_READ_SAME}$"),
         CallbackQueryHandler(read_new_callback, pattern=f"^{CB_READ_NEW}$"),
         CommandHandler("reread", reread_command),
+        CommandHandler("setbook", setbook_command),
+        CommandHandler("setdiet", setdiet_command),
     ]
