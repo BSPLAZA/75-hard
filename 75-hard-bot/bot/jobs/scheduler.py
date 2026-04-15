@@ -13,10 +13,37 @@ ET = pytz.timezone("US/Eastern")
 
 
 async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """7 AM ET -- Post daily card."""
+    """7 AM ET -- Post daily card. Day 1 includes participant intros."""
+    db = context.bot_data["db"]
     day = get_day_number(CHALLENGE_START_DATE, date.today())
-    if 1 <= day <= CHALLENGE_DAYS:
-        await post_daily_card(context)
+    if not (1 <= day <= CHALLENGE_DAYS):
+        return
+
+    chat_id = context.bot_data.get("group_chat_id")
+
+    # Day 1: post participant introductions before the card
+    if day == 1 and chat_id:
+        users = await db.get_active_users()
+        lines = [
+            "🔥 DAY 1 — LET'S GO\n",
+            "Meet your squad:\n",
+        ]
+        for u in sorted(users, key=lambda x: x["name"].lower()):
+            diet = u.get("diet_plan") or "not set yet"
+            book = u.get("current_book") or "TBD"
+            lines.append(f"  {u['name']}")
+            lines.append(f"    🍽️ {diet}")
+            lines.append(f'    📖 "{book}"')
+            lines.append("")
+
+        lines.append("75 days starts now. No one knows who they'll be on Day 75.")
+
+        try:
+            await context.bot.send_message(chat_id=chat_id, text="\n".join(lines))
+        except Exception:
+            pass
+
+    await post_daily_card(context)
 
 
 async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:

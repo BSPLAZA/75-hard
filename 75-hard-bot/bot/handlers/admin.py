@@ -13,6 +13,7 @@ from telegram.ext import (
 
 from bot.config import ADMIN_USER_ID, CHALLENGE_START_DATE
 from bot.handlers.daily_card import post_daily_card, refresh_card
+from bot.jobs.scheduler import evening_scoreboard_job, nudge_job
 from bot.templates.messages import FAIL_CONFIRM, FAIL_DONE
 from bot.utils.progress import get_day_number
 
@@ -274,10 +275,34 @@ async def fail_cancel(
 
 def get_admin_handlers() -> list:
     """Return all admin command handlers."""
+async def admin_test_recap_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Trigger the evening scoreboard recap for testing."""
+    if not _is_admin(update.effective_user.id):
+        await update.message.reply_text("Admin only.")
+        return
+    await evening_scoreboard_job(context)
+    await update.message.reply_text("Recap triggered.")
+
+
+async def admin_test_nudge_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Trigger the 11 PM nudge DMs for testing."""
+    if not _is_admin(update.effective_user.id):
+        await update.message.reply_text("Admin only.")
+        return
+    await nudge_job(context)
+    await update.message.reply_text("Nudge triggered.")
+
+
     return [
         CommandHandler("admin_set_group", admin_set_group_command),
         CommandHandler("admin_status", admin_status_command),
         CommandHandler("admin_reset_day", admin_reset_day_command),
+        CommandHandler("admin_test_recap", admin_test_recap_command),
+        CommandHandler("admin_test_nudge", admin_test_nudge_command),
         CommandHandler("admin_feedback", admin_feedback_command),
         CommandHandler("admin_resolve", admin_resolve_command),
         CommandHandler("admin_announce", admin_announce_command),

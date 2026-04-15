@@ -42,6 +42,7 @@ class Database:
                 failed_day INTEGER,
                 dm_registered INTEGER DEFAULT 0,
                 current_book TEXT,
+                diet_plan TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -94,6 +95,15 @@ class Database:
             """
         )
         await self._conn.commit()
+        await self._migrate()
+
+    async def _migrate(self) -> None:
+        """Add columns that may not exist in older databases."""
+        try:
+            await self._conn.execute("ALTER TABLE users ADD COLUMN diet_plan TEXT")
+            await self._conn.commit()
+        except Exception:
+            pass  # Column already exists
 
     # ── users ──────────────────────────────────────────────────────────
 
@@ -366,6 +376,14 @@ class Database:
             await self._conn.commit()
 
     # ── books ──────────────────────────────────────────────────────────
+
+    async def set_diet_plan(self, telegram_id: int, diet_plan: str) -> None:
+        """Set the user's diet plan."""
+        await self._conn.execute(
+            "UPDATE users SET diet_plan = ? WHERE telegram_id = ?",
+            (diet_plan, telegram_id),
+        )
+        await self._conn.commit()
 
     async def set_current_book(
         self, telegram_id: int, title: str, *, started_day: int

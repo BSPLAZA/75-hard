@@ -21,10 +21,13 @@ from bot.templates.messages import (
 # Conversation states
 AWAITING_NAME = 0
 AWAITING_COMMITMENT = 1
+AWAITING_DIET = 2
+AWAITING_BOOK = 3
 
 # Callback data
 CB_LOCKED_IN = "onboard_locked_in"
 CB_NOT_FOR_ME = "onboard_not_for_me"
+CB_BOOK_LATER = "onboard_book_later"
 
 # Users who don't need to pay
 ALREADY_PAID = ["Yumna"]
@@ -101,10 +104,8 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"{matched} is already registered by someone else.")
         return ConversationHandler.END
 
-    # Store the matched name for the next step
     context.user_data["onboard_name"] = matched
 
-    # Send the rules card
     rules = (
         f"Hey {matched} 👊\n"
         "\n"
@@ -181,22 +182,111 @@ async def commitment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await db.add_user(query.from_user.id, matched)
         await db.register_dm(query.from_user.id)
 
-    # Determine payment status
+    # Now ask about diet
+    await query.edit_message_text(
+        "🍽️ WHAT'S YOUR DIET?\n"
+        "\n"
+        "One of the rules is to follow a diet for all 75 days.\n"
+        "You choose what that means for you. Some examples:\n"
+        "\n"
+        "• High protein (150g+ per day)\n"
+        "• Keto / low carb\n"
+        "• Calorie deficit (e.g. 1800 cal/day)\n"
+        "• Clean eating (no processed food)\n"
+        "• Vegetarian / vegan\n"
+        "• No sugar\n"
+        "• Custom (describe your own)\n"
+        "\n"
+        "The only hard rules: no alcohol and no cheat meals.\n"
+        "\n"
+        "Type your diet plan below:"
+    )
+    return AWAITING_DIET
+
+
+async def receive_diet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User typed their diet plan — save it, ask about book."""
+    db = context.bot_data["db"]
+    matched = context.user_data.get("onboard_name")
+    diet = update.message.text.strip()
+
+    user = await db.get_user_by_name(matched)
+    if user:
+        await db.set_diet_plan(user["telegram_id"], diet)
+
+    buttons = InlineKeyboardMarkup([[
+        InlineKeyboardButton("I'll decide later", callback_data=CB_BOOK_LATER),
+    ]])
+
+    await update.message.reply_text(
+        f"Got it — \"{diet}\" 💪\n"
+        "\n"
+        "📖 WHAT BOOK ARE YOU STARTING WITH?\n"
+        "\n"
+        "You'll read 10 pages of non-fiction every day.\n"
+        "What's your first book going to be?\n"
+        "\n"
+        "Type the title below, or tap the button if you\n"
+        "haven't picked one yet (you can always update later\n"
+        "by DMing me).",
+        reply_markup=buttons,
+    )
+    return AWAITING_BOOK
+
+
+async def receive_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User typed their book title — save it, show final confirmation."""
+    db = context.bot_data["db"]
+    matched = context.user_data.get("onboard_name")
+    book = update.message.text.strip()
+
+    user = await db.get_user_by_name(matched)
+    if user:
+        await db.set_current_book(user["telegram_id"], book, started_day=1)
+
+    await _show_final_confirmation(update.effective_user.id, matched, context, book=book)
+    context.user_data.pop("onboard_name", None)
+    return ConversationHandler.END
+
+
+async def book_later_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User tapped 'I'll decide later' for book."""
+    query = update.callback_query
+    await query.answer()
+    matched = context.user_data.get("onboard_name")
+
+    await _show_final_confirmation(query.from_user.id, matched, context, book=None, edit_message=query)
+    context.user_data.pop("onboard_name", None)
+    return ConversationHandler.END
+
+
+async def _show_final_confirmation(user_id, matched, context, book=None, edit_message=None):
+    """Show the final confirmation with payment info if needed."""
+    db = context.bot_data["db"]
+    user = await db.get_user_by_name(matched)
+    diet = user["diet_plan"] if user else "not set"
+
+    book_line = f'📖 Starting with: "{book}"' if book else "📖 Book: TBD (DM me when you pick one)"
+
     if matched == ORGANIZER:
-        # Bryan doesn't pay himself
-        await query.edit_message_text(
+        text = (
             "✅ YOU'RE IN, BOSS\n"
             "\n"
-            "You're registered and running this thing.\n"
+            f"🍽️ Diet: {diet}\n"
+            f"{book_line}\n"
             "\n"
+            "You're registered and running this thing.\n"
             "Once everyone else registers and pays, create\n"
             "the group and add me. I'll handle the rest.\n"
             "\n"
             "🔥 Let's make this legendary."
         )
     elif matched in ALREADY_PAID:
-        await query.edit_message_text(
+        text = (
             "✅ YOU'RE IN\n"
+            "\n"
+            f"🍽️ Diet: {diet}\n"
+            f"{book_line}\n"
             "\n"
             f"Hey {matched} — your payment is already confirmed. 💰\n"
             "\n"
@@ -206,15 +296,16 @@ async def commitment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             "🔥 See you on the other side."
         )
     else:
-        # Needs to pay — send Venmo link
         venmo_note = "75 Hard - Locked In"
         venmo_deeplink = (
             f"https://venmo.com/{VENMO_USERNAME}"
             f"?txn=pay&amount={BUY_IN}&note={venmo_note.replace(' ', '%20')}"
         )
-
-        await query.edit_message_text(
+        text = (
             "💰 BUY-IN: $75\n"
+            "\n"
+            f"🍽️ Diet: {diet}\n"
+            f"{book_line}\n"
             "\n"
             f"Last step — send ${BUY_IN} to @{VENMO_USERNAME} on Venmo.\n"
             "\n"
@@ -229,10 +320,12 @@ async def commitment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             "🔥 See you on the other side."
         )
 
-    # Update welcome message in group
+    if edit_message:
+        await edit_message.edit_message_text(text)
+    else:
+        await context.bot.send_message(chat_id=user_id, text=text)
+
     await _update_welcome_message(context)
-    context.user_data.pop("onboard_name", None)
-    return ConversationHandler.END
 
 
 async def _update_welcome_message(context: ContextTypes.DEFAULT_TYPE):
@@ -284,6 +377,13 @@ def get_onboarding_handler() -> ConversationHandler:
             AWAITING_COMMITMENT: [
                 CallbackQueryHandler(commitment_callback, pattern=f"^{CB_LOCKED_IN}$"),
                 CallbackQueryHandler(commitment_callback, pattern=f"^{CB_NOT_FOR_ME}$"),
+            ],
+            AWAITING_DIET: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_diet),
+            ],
+            AWAITING_BOOK: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_book),
+                CallbackQueryHandler(book_later_callback, pattern=f"^{CB_BOOK_LATER}$"),
             ],
         },
         fallbacks=[CommandHandler("start", start_command)],
