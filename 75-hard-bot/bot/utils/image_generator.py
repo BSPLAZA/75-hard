@@ -174,11 +174,14 @@ def render_weekly_digest_image(
     total_reading_days: int,
     first_finisher_name: str | None,
     first_finisher_count: int,
+    reading_log: list[dict] | None = None,
 ) -> BytesIO:
     """Generate a weekly digest scoreboard image. Returns a BytesIO PNG buffer.
 
     user_stats is a list of dicts with keys:
         name, days_complete, total_days, consistency (list of bool for each day)
+    reading_log is a list of dicts with keys:
+        name, books: [{title, days, cover_url}]
     """
     scale = 2
     padding = 40 * scale
@@ -190,6 +193,10 @@ def render_weekly_digest_image(
     dot_size = 18 * scale
     dot_gap = 8 * scale
 
+    reading_row_height = 36 * scale
+    reading_section_header = 40 * scale
+    num_reading = len(reading_log) if reading_log else 0
+
     num_users = len(user_stats)
     width = 700 * scale
     height = (
@@ -197,6 +204,7 @@ def render_weekly_digest_image(
         + stats_height
         + user_section_header
         + (num_users * row_height)
+        + (reading_section_header + num_reading * reading_row_height if num_reading else 0)
         + footer_height
         + padding
     )
@@ -301,8 +309,27 @@ def render_weekly_digest_image(
                 font=_load_font(22 * scale),
             )
 
+    # ── Reading section ─────────────────────────────────────────────
+    reading_y = y + num_users * row_height + 8
+    if reading_log:
+        draw.line([(padding, reading_y), (width - padding, reading_y)], fill=BORDER, width=2)
+        reading_y += 16 * scale
+        draw.text((padding, reading_y), "📖  READING", fill=TEXT_DIM, font=font_section)
+        reading_y += reading_section_header
+
+        font_book = _load_font(14 * scale)
+        font_book_dim = _load_font(12 * scale)
+
+        for entry in reading_log:
+            name = entry["name"]
+            books = entry.get("books", [])
+            books_str = ", ".join(f'{b["title"]} ({b["days"]}d)' for b in books)
+            draw.text((padding, reading_y), name, fill=TEXT_PRIMARY, font=font_book)
+            draw.text((padding + 120 * scale, reading_y), books_str, fill=TEXT_DIM, font=font_book_dim)
+            reading_y += reading_row_height
+
     # ── Footer ────────────────────────────────────────────────────────
-    footer_y = y + num_users * row_height + 8
+    footer_y = reading_y + 8
     draw.line([(padding, footer_y), (width - padding, footer_y)], fill=BORDER, width=2)
 
     perfect_count = sum(1 for u in user_stats if u["days_complete"] == u["total_days"] and u["total_days"] > 0)

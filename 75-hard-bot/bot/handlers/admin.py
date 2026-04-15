@@ -545,36 +545,17 @@ async def admin_test_digest_command(
             total_reading_days=data["total_reading_days"],
             first_finisher_name=data["first_finisher_name"],
             first_finisher_count=data["first_finisher_count"],
+            reading_log=data["reading_log"],
         )
 
-        # Build reading log
-        reading_parts = []
-        if data["reading_log"]:
-            reading_parts.append("📖 This week's reading\n")
-            for entry in data["reading_log"]:
-                books_str = ", ".join(
-                    f'"{b["title"]}" ({b["days"]} day{"s" if b["days"] != 1 else ""})'
-                    for b in entry["books"]
-                )
-                reading_parts.append(f'{entry["name"]} — {books_str}')
-
-        reading_text = "\n".join(reading_parts) if reading_parts else ""
-
-        # Generate AI reflection
+        # Generate AI reflection as caption (reading is now in the image)
         reflection = await generate_weekly_reflection(
             week_number=data["week_number"],
             user_stats=data["user_stats"],
             reading_log=data["reading_log"],
         )
 
-        # Build caption
-        caption_parts = []
-        if reading_text:
-            caption_parts.append(reading_text)
-        if reflection:
-            caption_parts.append(f"\n{reflection}")
-
-        caption = "\n".join(caption_parts) if caption_parts else f"Week {data['week_number']} digest"
+        caption = reflection or f"Week {data['week_number']} digest"
 
         # Send to current chat
         if len(caption) > 1024:

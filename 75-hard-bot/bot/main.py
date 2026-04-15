@@ -151,15 +151,33 @@ def main() -> None:
     for h in get_admin_handlers():
         app.add_handler(h)
 
-    # Text handlers — custom workout name (group) and reading flow (DM)
+    # Text handlers — custom workout name (group), reading flow (DM), and AI chat (DM)
+    from bot.utils.luke_chat import chat_with_luke
+
     async def combined_text_handler(update: Update, context):
         """Route text messages to the right handler."""
-        # Check for custom workout name first (works in groups)
         if await handle_custom_workout_name(update, context):
             return
-        # Then check for reading DM flow
         if update.effective_chat.type == "private":
-            await handle_dm_text(update, context)
+            # Active conversation flows first (reading, onboarding, etc.)
+            if await handle_dm_text(update, context):
+                return
+
+            # No active flow — full AI chat with database tools
+            message = update.message.text.strip()
+            if len(message) < 2:
+                return
+
+            db = context.bot_data["db"]
+            result = await chat_with_luke(message, db, update.effective_user.id)
+
+            if result.get("cover_url"):
+                await update.message.reply_photo(
+                    photo=result["cover_url"],
+                    caption=result["text"],
+                )
+            elif result["text"]:
+                await update.message.reply_text(result["text"])
 
     app.add_handler(get_dm_photo_handler())
     app.add_handler(
