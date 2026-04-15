@@ -364,20 +364,39 @@ async def _check_all_joined(context):
         chat_id = context.bot_data.get("group_chat_id")
         if chat_id:
             names = [u["name"] for u in sorted(registered, key=lambda x: x["name"].lower())]
-            text = (
+            celebration = (
                 "🔥🔥🔥 THE SQUAD IS COMPLETE 🔥🔥🔥\n"
                 "\n"
                 f"{', '.join(names[:-1])} and {names[-1]} are all in.\n"
                 "\n"
                 f"5 people. 75 days. ${BUY_IN * len(names)} on the line.\n"
                 "\n"
-                "Day 1 starts tomorrow at 7 AM ET.\n"
-                "I'll drop the first daily card then.\n"
-                "\n"
                 "No turning back now. 💪"
             )
+
+            quickstart = (
+                "🤖 QUICK START\n"
+                "\n"
+                "Every morning I'll post a daily card here.\n"
+                "Tap the buttons to log your tasks:\n"
+                "\n"
+                "  💧  Water — tap once per cup (16 total)\n"
+                "  🏋️  Workout — pick type + indoor/outdoor\n"
+                "  📖  Read — I'll DM you for book + takeaway\n"
+                "  📸  Photo — I'll DM you, send your pic there\n"
+                "  🍽️  Diet — one tap to confirm\n"
+                "\n"
+                "Photos are private — only you and I see them.\n"
+                "I'll send a recap every night at 10 PM ET\n"
+                "and a nudge at 11 PM if you have tasks left.\n"
+                "\n"
+                "Day 1 card drops tomorrow at 7 AM ET.\n"
+                "Check the pinned message for full rules + FAQ."
+            )
+
             try:
-                await context.bot.send_message(chat_id=chat_id, text=text)
+                await context.bot.send_message(chat_id=chat_id, text=celebration)
+                await context.bot.send_message(chat_id=chat_id, text=quickstart)
             except Exception:
                 pass
 
