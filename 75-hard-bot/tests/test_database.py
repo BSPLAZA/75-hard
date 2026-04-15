@@ -428,3 +428,72 @@ async def test_resolve_feedback(db):
 
     resolved = await db.get_feedback(status="resolved")
     assert len(resolved) == 1
+
+
+# ── Event Log ─────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_log_event_basic(db):
+    await db.log_event(111, "Bryan", "water_tap", "cups=5")
+    async with db._conn.execute("SELECT * FROM event_log") as cur:
+        rows = await cur.fetchall()
+    assert len(rows) == 1
+    assert rows[0]["event_type"] == "water_tap"
+    assert rows[0]["user_id"] == 111
+    assert rows[0]["user_name"] == "Bryan"
+    assert rows[0]["event_detail"] == "cups=5"
+
+
+@pytest.mark.asyncio
+async def test_log_event_with_latency(db):
+    await db.log_event(None, None, "ai_morning", "day=5", latency_ms=1200)
+    async with db._conn.execute("SELECT * FROM event_log") as cur:
+        rows = await cur.fetchall()
+    assert len(rows) == 1
+    assert rows[0]["latency_ms"] == 1200
+    assert rows[0]["user_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_log_event_with_error(db):
+    await db.log_event(111, "Bryan", "error", error="Something broke")
+    async with db._conn.execute("SELECT * FROM event_log") as cur:
+        rows = await cur.fetchall()
+    assert len(rows) == 1
+    assert rows[0]["error"] == "Something broke"
+
+
+@pytest.mark.asyncio
+async def test_log_event_never_raises(db):
+    """log_event should silently fail, never crash the bot."""
+    # Close the connection to force an error
+    await db.close()
+    # This should NOT raise
+    await db.log_event(111, "Bryan", "water_tap")
+
+
+@pytest.mark.asyncio
+async def test_get_event_log_health_empty(db):
+    health = await db.get_event_log_health()
+    assert health["events_today"] == 0
+    assert health["errors_24h"] == 0
+    assert health["active_users_today"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_event_log_health_with_data(db):
+    await db.log_event(111, "Bryan", "water_tap", "cups=5")
+    await db.log_event(222, "Kat", "diet_toggle", "on=True")
+    await db.log_event(111, "Bryan", "ai_chat", "msg_len=20", latency_ms=800)
+    await db.log_event(111, "Bryan", "ai_chat", "msg_len=15", latency_ms=1200)
+    await db.log_event(None, None, "error", error="test error")
+
+    health = await db.get_event_log_health()
+    assert health["events_today"] == 5
+    assert health["errors_24h"] == 1
+    assert health["active_users_today"] == 2
+    assert health["feature_usage"]["Water taps"] == 1
+    assert health["feature_usage"]["Diet toggles"] == 1
+    assert health["feature_usage"]["AI chats"] == 2
+    # AI chat latency average should be (800 + 1200) / 2 = 1000
+    assert health["ai_latency"]["ai_chat"] == 1000.0

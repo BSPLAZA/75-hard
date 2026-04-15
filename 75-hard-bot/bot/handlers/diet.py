@@ -31,6 +31,7 @@ async def diet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await db.create_checkin(update.effective_user.id, day_number, date.today().isoformat())
 
     now_on, just_completed = await db.toggle_diet(update.effective_user.id, day_number)
+    await db.log_event(update.effective_user.id, user["name"], "diet_toggle", f"on={now_on}")
     popup = DIET_ON if now_on else DIET_OFF
     await query.answer(popup, show_alert=False)
     await refresh_card(context, day_number)

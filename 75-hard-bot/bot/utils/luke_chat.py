@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from datetime import date
 
 import anthropic
@@ -275,6 +276,8 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
 
         messages = [{"role": "user", "content": message}]
 
+        start = time.monotonic()
+
         # First call — Claude may want to use tools
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
@@ -326,8 +329,12 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
         # Clean up
         text = text.replace("—", "-").replace("–", "-").strip('"').strip("'").strip()
 
+        latency_ms = int((time.monotonic() - start) * 1000)
+        await db.log_event(user_id, None, "ai_chat", f"msg_len={len(message)}", latency_ms=latency_ms)
+
         return {"text": text, "cover_url": cover_url, "media": media}
 
     except Exception as e:
         logger.error("Luke chat failed: %s", e)
+        await db.log_event(user_id, None, "ai_chat", error=str(e))
         return {"text": "something went wrong. try a /command instead", "cover_url": None, "media": None}

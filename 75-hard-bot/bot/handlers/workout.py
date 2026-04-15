@@ -232,6 +232,7 @@ async def workout_location_callback(
     name = user["name"] if user else update.effective_user.first_name
 
     slot, just_completed = await db.log_workout(update.effective_user.id, day_number, wtype, location)
+    await db.log_event(update.effective_user.id, name, "workout_log", f"type={wtype} location={location} slot={slot}")
     loc_emoji = LOC_EMOJI.get(location, "")
 
     # Record workout time for simultaneous detection

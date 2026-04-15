@@ -2,6 +2,7 @@
 
 import logging
 import pytz
+import time as time_mod
 from collections import Counter, defaultdict
 from datetime import date, time
 
@@ -54,19 +55,27 @@ async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         active_users = await db.get_active_users()
         all_users = await db.get_all_users()
+        start = time_mod.monotonic()
         ai_message = await generate_morning_message(
             day_number=day,
             active_count=len(active_users),
             total_count=len(all_users),
             yesterday_summary=yesterday_summary,
         )
+        latency_ms = int((time_mod.monotonic() - start) * 1000)
+        await db.log_event(None, None, "ai_morning", f"day={day}", latency_ms=latency_ms)
         if ai_message:
             try:
                 await context.bot.send_message(chat_id=chat_id, text=ai_message)
             except Exception:
                 pass
 
-    await post_daily_card(context)
+    try:
+        await post_daily_card(context)
+        await db.log_event(None, None, "health_check_ok", f"day={day}")
+    except Exception as e:
+        await db.log_event(None, None, "health_check_fail", f"day={day}", error=str(e))
+        raise
 
     # Post milestone message if applicable (separate message after the card)
     await post_milestone_if_needed(context, day)
@@ -121,6 +130,8 @@ async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         await context.bot.send_message(chat_id=chat_id, text=caption)
     else:
         await context.bot.send_photo(chat_id=chat_id, photo=image_buf, caption=caption)
+
+    await db.log_event(None, None, "ai_recap", f"day={day} complete={len(complete)}/{len(checkins)}")
 
 
 async def nudge_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -336,11 +347,14 @@ async def weekly_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
         # Generate AI reflection as caption (reading is now in the image)
+        start = time_mod.monotonic()
         reflection = await generate_weekly_reflection(
             week_number=data["week_number"],
             user_stats=data["user_stats"],
             reading_log=data["reading_log"],
         )
+        latency_ms = int((time_mod.monotonic() - start) * 1000)
+        await db.log_event(None, None, "ai_weekly", f"week={data['week_number']}", latency_ms=latency_ms)
 
         caption = reflection or f"Week {data['week_number']} digest"
 

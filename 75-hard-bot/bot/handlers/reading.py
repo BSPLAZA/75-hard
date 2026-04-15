@@ -174,6 +174,7 @@ async def handle_dm_text(
             context.user_data.pop("pending_book_title", None)
 
         just_completed = await db.log_reading(user_id, day_number, title, takeaway)
+        await db.log_event(user_id, user["name"] if user else None, "reading_log", f"book={title}")
 
         name = user["name"] if user else update.effective_user.first_name
         await update.message.reply_text(

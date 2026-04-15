@@ -26,6 +26,28 @@ def _is_admin(user_id: int) -> bool:
     return user_id == ADMIN_USER_ID
 
 
+async def _admin_reply(update: Update, context, text: str, **kwargs):
+    """Reply to admin via DM, not in the group. Delete the command from group if possible."""
+    # Always send to admin's DM
+    await context.bot.send_message(chat_id=ADMIN_USER_ID, text=text, **kwargs)
+    # If command was in a group, try to delete it to keep chat clean
+    if update.effective_chat.type != "private":
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+
+async def _admin_reply_photo(update: Update, context, **kwargs):
+    """Send photo to admin via DM."""
+    await context.bot.send_photo(chat_id=ADMIN_USER_ID, **kwargs)
+    if update.effective_chat.type != "private":
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+
 # ── Admin commands ────────────────────────────────────────────────────
 
 
@@ -34,14 +56,14 @@ async def admin_status_command(
 ) -> None:
     """Show all users and their status."""
     if not _is_admin(update.effective_user.id):
-        await update.message.reply_text("Admin only.")
+        await _admin_reply(update, context, "Admin only.")
         return
 
     db = context.bot_data["db"]
     users = await db.get_all_users()
 
     if not users:
-        await update.message.reply_text("No users registered.")
+        await _admin_reply(update, context, "No users registered.")
         return
 
     lines = ["User Status:\n"]
@@ -51,7 +73,7 @@ async def admin_status_command(
         dm = "DM" if u["dm_registered"] else "no DM"
         lines.append(f"  {u['name']} — {status} / {paid} / {dm}")
 
-    await update.message.reply_text("\n".join(lines))
+    await _admin_reply(update, context, "\n".join(lines))
 
 
 async def admin_set_group_command(
@@ -59,11 +81,13 @@ async def admin_set_group_command(
 ) -> None:
     """Run this in a group to set it as the active group for the bot."""
     if not _is_admin(update.effective_user.id):
-        await update.message.reply_text("Admin only.")
+        await _admin_reply(update, context, "Admin only.")
         return
 
     chat_id = update.effective_chat.id
     context.bot_data["group_chat_id"] = chat_id
+    db = context.bot_data["db"]
+    await db.set_setting("group_chat_id", str(chat_id))
 
     # Generate invite link
     try:
@@ -72,13 +96,14 @@ async def admin_set_group_command(
             name="75 Hard — Locked In",
         )
         context.bot_data["group_invite_link"] = invite.invite_link
-        await update.message.reply_text(
+        await db.set_setting("group_invite_link", invite.invite_link)
+        await _admin_reply(update, context, 
             f"Group set! Invite link ready.\n"
             f"Use /admin_reset_day to post today's card.\n"
             f"Use /admin_confirm_payment <name> after someone pays."
         )
     except Exception:
-        await update.message.reply_text(
+        await _admin_reply(update, context, 
             f"Group set! But I couldn't create an invite link.\n"
             f"Make sure I have 'Invite Users' admin permission."
         )
@@ -89,18 +114,18 @@ async def admin_reset_day_command(
 ) -> None:
     """Repost today's daily card."""
     if not _is_admin(update.effective_user.id):
-        await update.message.reply_text("Admin only.")
+        await _admin_reply(update, context, "Admin only.")
         return
 
     group_chat_id = context.bot_data.get("group_chat_id")
     if not group_chat_id:
-        await update.message.reply_text(
+        await _admin_reply(update, context, 
             "No group configured! Add me to a group and type /admin_set_group there first."
         )
         return
 
     await post_daily_card(context, chat_id=group_chat_id)
-    await update.message.reply_text("Daily card reposted.")
+    await _admin_reply(update, context, "Daily card reposted.")
 
 
 async def admin_feedback_command(
@@ -108,7 +133,7 @@ async def admin_feedback_command(
 ) -> None:
     """Show unresolved feedback. Optional filter: /admin_feedback bugs"""
     if not _is_admin(update.effective_user.id):
-        await update.message.reply_text("Admin only.")
+        await _admin_reply(update, context, "Admin only.")
         return
 
     db = context.bot_data["db"]
@@ -123,7 +148,7 @@ async def admin_feedback_command(
     items = await db.get_feedback(fb_type=fb_type)
 
     if not items:
-        await update.message.reply_text("No unresolved feedback.")
+        await _admin_reply(update, context, "No unresolved feedback.")
         return
 
     lines = ["Unresolved feedback:\n"]
@@ -133,7 +158,7 @@ async def admin_feedback_command(
             f" — {item['context'] or 'no context'}"
         )
 
-    await update.message.reply_text("\n".join(lines))
+    await _admin_reply(update, context, "\n".join(lines))
 
 
 async def admin_resolve_command(
@@ -141,14 +166,14 @@ async def admin_resolve_command(
 ) -> None:
     """Mark feedback as resolved: /admin_resolve [id] [status]"""
     if not _is_admin(update.effective_user.id):
-        await update.message.reply_text("Admin only.")
+        await _admin_reply(update, context, "Admin only.")
         return
 
     db = context.bot_data["db"]
     args = context.args or []
 
     if len(args) < 1:
-        await update.message.reply_text(
+        await _admin_reply(update, context, 
             "Usage: /admin_resolve <id> [status]\n"
             "Status options: acknowledged, implemented, wontfix, resolved"
         )
@@ -157,19 +182,19 @@ async def admin_resolve_command(
     try:
         fb_id = int(args[0])
     except ValueError:
-        await update.message.reply_text("ID must be a number.")
+        await _admin_reply(update, context, "ID must be a number.")
         return
 
     valid_statuses = {"acknowledged", "implemented", "wontfix", "resolved"}
     status = args[1].lower() if len(args) > 1 else "resolved"
     if status not in valid_statuses:
-        await update.message.reply_text(
+        await _admin_reply(update, context, 
             f"Invalid status. Choose from: {', '.join(sorted(valid_statuses))}"
         )
         return
 
     await db.resolve_feedback(fb_id, status=status)
-    await update.message.reply_text(f"Feedback #{fb_id} marked as {status}.")
+    await _admin_reply(update, context, f"Feedback #{fb_id} marked as {status}.")
 
 
 async def admin_announce_command(
@@ -177,21 +202,21 @@ async def admin_announce_command(
 ) -> None:
     """Post a message to the group as the bot."""
     if not _is_admin(update.effective_user.id):
-        await update.message.reply_text("Admin only.")
+        await _admin_reply(update, context, "Admin only.")
         return
 
     if not context.args:
-        await update.message.reply_text("Usage: /admin_announce <message>")
+        await _admin_reply(update, context, "Usage: /admin_announce <message>")
         return
 
     group_chat_id = context.bot_data.get("group_chat_id")
     if not group_chat_id:
-        await update.message.reply_text("Group chat ID not configured.")
+        await _admin_reply(update, context, "Group chat ID not configured.")
         return
 
     message = " ".join(context.args)
     await context.bot.send_message(chat_id=group_chat_id, text=message)
-    await update.message.reply_text("Announcement sent.")
+    await _admin_reply(update, context, "Announcement sent.")
 
 
 # ── /fail conversation ────────────────────────────────────────────────
@@ -412,7 +437,7 @@ async def admin_test_recap_command(
 ) -> None:
     """Trigger the evening scoreboard recap for testing."""
     if not _is_admin(update.effective_user.id):
-        await update.message.reply_text("Admin only.")
+        await _admin_reply(update, context, "Admin only.")
         return
     try:
         from bot.utils.image_generator import render_recap_image
@@ -427,7 +452,7 @@ async def admin_test_recap_command(
         checkins = [dict(c) for c in checkins_raw]
 
         if not checkins:
-            await update.message.reply_text("No checkins for today.")
+            await _admin_reply(update, context, "No checkins for today.")
             return
 
         complete = [c for c in checkins if is_all_complete(c)]
@@ -451,10 +476,10 @@ async def admin_test_recap_command(
         caption_parts.append(f"{len(complete)}/{len(checkins)} completed · {remaining} days to go")
         caption = "\n".join(caption_parts)
 
-        await context.bot.send_photo(chat_id=chat_id, photo=image_buf, caption=caption[:1024])
+        await _admin_reply_photo(update, context, photo=image_buf, caption=caption[:1024])
     except Exception as e:
         import traceback
-        await update.message.reply_text(f"Recap failed:\n{traceback.format_exc()[-500:]}")
+        await _admin_reply(update, context, f"Recap failed:\n{traceback.format_exc()[-500:]}")
 
 
 async def admin_test_morning_command(
@@ -462,7 +487,7 @@ async def admin_test_morning_command(
 ) -> None:
     """Test the AI morning message."""
     if not _is_admin(update.effective_user.id):
-        await update.message.reply_text("Admin only.")
+        await _admin_reply(update, context, "Admin only.")
         return
     try:
         from bot.utils.luke_ai import generate_morning_message
@@ -495,10 +520,10 @@ async def admin_test_morning_command(
         active = await db.get_active_users()
         all_users = await db.get_all_users()
         msg = await generate_morning_message(day + 1, len(active), len(all_users), yesterday_summary)
-        await update.message.reply_text(msg or "AI generation failed - check API key.")
+        await _admin_reply(update, context, msg or "AI generation failed - check API key.")
     except Exception as e:
         import traceback
-        await update.message.reply_text(f"Failed:\n{traceback.format_exc()[-500:]}")
+        await _admin_reply(update, context, f"Failed:\n{traceback.format_exc()[-500:]}")
 
 
 async def admin_test_nudge_command(
@@ -506,10 +531,10 @@ async def admin_test_nudge_command(
 ) -> None:
     """Trigger the 11 PM nudge DMs for testing."""
     if not _is_admin(update.effective_user.id):
-        await update.message.reply_text("Admin only.")
+        await _admin_reply(update, context, "Admin only.")
         return
     await nudge_job(context)
-    await update.message.reply_text("Nudge triggered.")
+    await _admin_reply(update, context, "Nudge triggered.")
 
 
 async def admin_test_digest_command(
@@ -517,7 +542,7 @@ async def admin_test_digest_command(
 ) -> None:
     """Preview the weekly Sunday digest."""
     if not _is_admin(update.effective_user.id):
-        await update.message.reply_text("Admin only.")
+        await _admin_reply(update, context, "Admin only.")
         return
     try:
         from bot.jobs.scheduler import _gather_weekly_data
@@ -533,7 +558,7 @@ async def admin_test_digest_command(
         data = await _gather_weekly_data(db, current_day)
 
         if not data["user_stats"]:
-            await update.message.reply_text("No checkin data found for the past 7 days.")
+            await _admin_reply(update, context, "No checkin data found for the past 7 days.")
             return
 
         # Generate digest image
@@ -557,16 +582,16 @@ async def admin_test_digest_command(
 
         caption = reflection or f"Week {data['week_number']} digest"
 
-        # Send to current chat
+        # Send to admin DM
         if len(caption) > 1024:
-            await context.bot.send_photo(chat_id=chat_id, photo=image_buf)
-            await context.bot.send_message(chat_id=chat_id, text=caption)
+            await _admin_reply_photo(update, context, photo=image_buf)
+            await _admin_reply(update, context, caption)
         else:
-            await context.bot.send_photo(chat_id=chat_id, photo=image_buf, caption=caption)
+            await _admin_reply_photo(update, context, photo=image_buf, caption=caption)
 
     except Exception as e:
         import traceback
-        await update.message.reply_text(f"Digest failed:\n{traceback.format_exc()[-500:]}")
+        await _admin_reply(update, context, f"Digest failed:\n{traceback.format_exc()[-500:]}")
 
 
 async def admin_test_transform_command(
@@ -574,7 +599,7 @@ async def admin_test_transform_command(
 ) -> None:
     """Generate Bryan's transformation composite for testing."""
     if not _is_admin(update.effective_user.id):
-        await update.message.reply_text("Admin only.")
+        await _admin_reply(update, context, "Admin only.")
         return
     try:
         db = context.bot_data["db"]
@@ -584,12 +609,12 @@ async def admin_test_transform_command(
         if not user:
             user = await db.get_user(update.effective_user.id)
         if not user:
-            await update.message.reply_text("No user found.")
+            await _admin_reply(update, context, "No user found.")
             return
 
         photos = await db.get_photo_file_ids(user["telegram_id"])
         if not photos:
-            await update.message.reply_text(
+            await _admin_reply(update, context, 
                 f"No photos found for {user['name']}."
             )
             return
@@ -598,12 +623,12 @@ async def admin_test_transform_command(
         latest_photo = photos[-1]
 
         if day1_photo["day_number"] == latest_photo["day_number"]:
-            await update.message.reply_text(
+            await _admin_reply(update, context, 
                 f"Only one day of photos for {user['name']}. Need at least 2."
             )
             return
 
-        await update.message.reply_text("Generating transformation...")
+        await _admin_reply(update, context, "Generating transformation...")
 
         from bot.utils.photo_transform import render_transformation
 
@@ -614,8 +639,8 @@ async def admin_test_transform_command(
             current_file_id=latest_photo["photo_file_id"],
             current_day=latest_photo["day_number"],
         )
-        await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
+        await _admin_reply_photo(
+            update, context,
             photo=buf,
             caption=(
                 f"{user['name']}'s transformation -- "
@@ -624,9 +649,63 @@ async def admin_test_transform_command(
         )
     except Exception as e:
         import traceback
-        await update.message.reply_text(
+        await _admin_reply(update, context, 
             f"Transform failed:\n{traceback.format_exc()[-500:]}"
         )
+
+
+async def admin_health_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Show bot health metrics from the event log."""
+    if not _is_admin(update.effective_user.id):
+        await _admin_reply(update, context, "Admin only.")
+        return
+
+    db = context.bot_data["db"]
+    health = await db.get_event_log_health()
+
+    # Active users / total users
+    active_users = await db.get_active_users()
+    all_users = await db.get_all_users()
+    active_count = len(active_users)
+    total_count = len(all_users)
+
+    # Users who completed all tasks today
+    day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+    checkins = await db.get_all_checkins_for_day(day)
+    from bot.utils.progress import is_all_complete
+    completed_count = sum(1 for c in checkins if is_all_complete(c))
+
+    lines = ["Bot Health Report\n"]
+    lines.append(f"Uptime: events logged since {health['first_event'] or 'never'}")
+    lines.append(f"Today: {health['events_today']} events logged\n")
+
+    lines.append("AI Performance:")
+    ai_labels = {
+        "ai_morning": "Morning msg",
+        "ai_chat": "Chat responses",
+        "ai_recap": "Recap generation",
+        "ai_weekly": "Weekly reflection",
+    }
+    for key, label in ai_labels.items():
+        avg = health["ai_latency"].get(key)
+        if avg is not None:
+            lines.append(f"  {label}: {avg / 1000:.1f}s avg latency")
+        else:
+            lines.append(f"  {label}: no data")
+
+    lines.append(f"\nFeature Usage (today):")
+    for label, count in health["feature_usage"].items():
+        lines.append(f"  {label}: {count}")
+
+    lines.append(f"\nErrors (last 24h): {health['errors_24h']}")
+
+    lines.append(f"\nEngagement:")
+    lines.append(f"  Active users today: {health['active_users_today']}/{active_count}")
+    lines.append(f"  Users who completed all tasks: {completed_count}/{active_count}")
+
+    await _admin_reply(update, context, "\n".join(lines))
 
 
 async def admin_confirm_payment_command(
@@ -634,11 +713,11 @@ async def admin_confirm_payment_command(
 ) -> None:
     """Confirm a user's payment and send them the group invite link."""
     if not _is_admin(update.effective_user.id):
-        await update.message.reply_text("Admin only.")
+        await _admin_reply(update, context, "Admin only.")
         return
 
     if not context.args:
-        await update.message.reply_text("Usage: /admin_confirm_payment <name>")
+        await _admin_reply(update, context, "Usage: /admin_confirm_payment <name>")
         return
 
     name = " ".join(context.args)
@@ -646,11 +725,11 @@ async def admin_confirm_payment_command(
     user = await db.get_user_by_name(name)
 
     if not user:
-        await update.message.reply_text(f"No user named '{name}' found.")
+        await _admin_reply(update, context, f"No user named '{name}' found.")
         return
 
     if not user["dm_registered"]:
-        await update.message.reply_text(f"{name} hasn't registered with the bot yet.")
+        await _admin_reply(update, context, f"{name} hasn't registered with the bot yet.")
         return
 
     # Mark as paid
@@ -673,11 +752,11 @@ async def admin_confirm_payment_command(
                     "See you in there 🔥"
                 ),
             )
-            await update.message.reply_text(f"Payment confirmed for {name}. Invite link sent.")
+            await _admin_reply(update, context, f"Payment confirmed for {name}. Invite link sent.")
         except Exception as e:
-            await update.message.reply_text(f"Payment confirmed for {name} but couldn't DM them: {e}")
+            await _admin_reply(update, context, f"Payment confirmed for {name} but couldn't DM them: {e}")
     else:
-        await update.message.reply_text(
+        await _admin_reply(update, context, 
             f"Payment confirmed for {name}, but no group invite link yet. "
             "Add me to a group first and I'll generate one."
         )
@@ -688,7 +767,7 @@ async def admin_reset_db_command(
 ) -> None:
     """Wipe all checkins, cards, and books — fresh start for testing."""
     if not _is_admin(update.effective_user.id):
-        await update.message.reply_text("Admin only.")
+        await _admin_reply(update, context, "Admin only.")
         return
 
     db = context.bot_data["db"]
@@ -702,7 +781,7 @@ async def admin_reset_db_command(
     await db._conn.execute("DELETE FROM books")
     await db._conn.execute("DELETE FROM feedback")
     await db._conn.commit()
-    await update.message.reply_text("Database reset. Backup saved. User registrations preserved.")
+    await _admin_reply(update, context, "Database reset. Backup saved. User registrations preserved.")
 
 
 def get_admin_handlers() -> list:
@@ -710,6 +789,7 @@ def get_admin_handlers() -> list:
     return [
         CommandHandler("admin_set_group", admin_set_group_command),
         CommandHandler("admin_status", admin_status_command),
+        CommandHandler("admin_health", admin_health_command),
         CommandHandler("admin_reset_day", admin_reset_day_command),
         CommandHandler("admin_test_recap", admin_test_recap_command),
         CommandHandler("admin_test_morning", admin_test_morning_command),

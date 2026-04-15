@@ -97,6 +97,7 @@ async def handle_dm_photo(
 
     already_had_photo = checkin["photo_done"]
     just_completed = await db.log_photo(user_id, day_number, file_id)
+    await db.log_event(user_id, user["name"], "photo_submit", f"day={day_number}")
 
     context.user_data.pop("awaiting_photo", None)
     context.user_data.pop("photo_day", None)

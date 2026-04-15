@@ -95,6 +95,17 @@ class Database:
                 message_id INTEGER,
                 chat_id INTEGER
             );
+
+            CREATE TABLE IF NOT EXISTS event_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+                user_id INTEGER,
+                user_name TEXT,
+                event_type TEXT NOT NULL,
+                event_detail TEXT,
+                latency_ms INTEGER,
+                error TEXT
+            );
             """
         )
         await self._conn.commit()
@@ -107,6 +118,7 @@ class Database:
             "ALTER TABLE users ADD COLUMN redeemed INTEGER DEFAULT 0",
             "ALTER TABLE users ADD COLUMN redemption_fee INTEGER DEFAULT 0",
             "ALTER TABLE books ADD COLUMN cover_url TEXT",
+            "CREATE TABLE IF NOT EXISTS bot_settings (key TEXT PRIMARY KEY, value TEXT)",
         ]
         for sql in migrations:
             try:
@@ -114,6 +126,20 @@ class Database:
                 await self._conn.commit()
             except Exception:
                 pass
+
+    async def get_setting(self, key: str) -> str | None:
+        async with self._conn.execute(
+            "SELECT value FROM bot_settings WHERE key = ?", (key,)
+        ) as cur:
+            row = await cur.fetchone()
+        return row["value"] if row else None
+
+    async def set_setting(self, key: str, value: str):
+        await self._conn.execute(
+            "INSERT OR REPLACE INTO bot_settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+        await self._conn.commit()
 
     # ── users ──────────────────────────────────────────────────────────
 
@@ -548,3 +574,94 @@ class Database:
             "UPDATE feedback SET status = ? WHERE id = ?", (status, fb_id)
         )
         await self._conn.commit()
+
+    # ── event log ─────────────────────────────────────────────────────
+
+    async def log_event(
+        self,
+        user_id: int | None,
+        user_name: str | None,
+        event_type: str,
+        event_detail: str = None,
+        latency_ms: int = None,
+        error: str = None,
+    ) -> None:
+        """Log an event. Fire-and-forget -- never raises."""
+        try:
+            await self._conn.execute(
+                """
+                INSERT INTO event_log (user_id, user_name, event_type, event_detail, latency_ms, error)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, user_name, event_type, event_detail, latency_ms, error),
+            )
+            await self._conn.commit()
+        except Exception:
+            pass
+
+    async def get_event_log_health(self) -> dict:
+        """Gather health metrics from the event log for /admin_health."""
+        result: dict = {}
+
+        # First event timestamp
+        async with self._conn.execute(
+            "SELECT MIN(timestamp) AS first_ts FROM event_log"
+        ) as cur:
+            row = await cur.fetchone()
+            result["first_event"] = row["first_ts"] if row else None
+
+        # Events today
+        async with self._conn.execute(
+            "SELECT COUNT(*) AS cnt FROM event_log WHERE DATE(timestamp) = DATE('now')"
+        ) as cur:
+            row = await cur.fetchone()
+            result["events_today"] = row["cnt"] if row else 0
+
+        # AI latency averages (today)
+        ai_types = ["ai_morning", "ai_chat", "ai_recap", "ai_weekly"]
+        result["ai_latency"] = {}
+        for atype in ai_types:
+            async with self._conn.execute(
+                "SELECT AVG(latency_ms) AS avg_ms FROM event_log "
+                "WHERE event_type = ? AND latency_ms IS NOT NULL AND DATE(timestamp) = DATE('now')",
+                (atype,),
+            ) as cur:
+                row = await cur.fetchone()
+                result["ai_latency"][atype] = row["avg_ms"] if row else None
+
+        # Feature usage today
+        usage_types = {
+            "water_tap": "Water taps",
+            "workout_log": "Workouts",
+            "reading_log": "Reading",
+            "photo_submit": "Photos",
+            "diet_toggle": "Diet toggles",
+            "ai_chat": "AI chats",
+        }
+        result["feature_usage"] = {}
+        for etype, label in usage_types.items():
+            async with self._conn.execute(
+                "SELECT COUNT(*) AS cnt FROM event_log "
+                "WHERE event_type = ? AND DATE(timestamp) = DATE('now')",
+                (etype,),
+            ) as cur:
+                row = await cur.fetchone()
+                result["feature_usage"][label] = row["cnt"] if row else 0
+
+        # Errors in last 24h
+        async with self._conn.execute(
+            "SELECT COUNT(*) AS cnt FROM event_log "
+            "WHERE event_type = 'error' AND timestamp > DATETIME('now', '-1 day')"
+        ) as cur:
+            row = await cur.fetchone()
+            result["errors_24h"] = row["cnt"] if row else 0
+
+        # Active users today (distinct user_ids with events today)
+        async with self._conn.execute(
+            "SELECT COUNT(DISTINCT user_id) AS cnt FROM event_log "
+            "WHERE user_id IS NOT NULL AND DATE(timestamp) = DATE('now')"
+        ) as cur:
+            row = await cur.fetchone()
+            result["active_users_today"] = row["cnt"] if row else 0
+
+        return result

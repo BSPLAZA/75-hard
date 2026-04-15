@@ -38,6 +38,7 @@ async def water_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     new_cups, just_completed = await db.increment_water(update.effective_user.id, day_number)
+    await db.log_event(update.effective_user.id, user["name"], "water_tap", f"cups={new_cups}")
     await query.answer(WATER_POPUP.format(cups=new_cups), show_alert=False)
     await refresh_card(context, day_number)
 

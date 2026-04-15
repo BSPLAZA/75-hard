@@ -40,7 +40,12 @@ async def post_init(application: Application) -> None:
     db = Database(DATABASE_PATH)
     await db.init()
     application.bot_data["db"] = db
-    application.bot_data["group_chat_id"] = GROUP_CHAT_ID if GROUP_CHAT_ID else None
+
+    # Restore persisted settings (survive restarts/deploys)
+    saved_chat_id = await db.get_setting("group_chat_id")
+    saved_invite = await db.get_setting("group_invite_link")
+    application.bot_data["group_chat_id"] = int(saved_chat_id) if saved_chat_id else (GROUP_CHAT_ID if GROUP_CHAT_ID else None)
+    application.bot_data["group_invite_link"] = saved_invite
 
     # Pre-populate participants with placeholder IDs
     all_users = await db.get_all_users()
@@ -52,8 +57,10 @@ async def post_init(application: Application) -> None:
 
     schedule_jobs(application.job_queue)
     logger.info(
-        "Bot initialized. %d users, jobs scheduled.",
+        "Bot initialized. %d users, jobs scheduled. group_chat_id=%s, invite_link=%s",
         len(await db.get_all_users()),
+        application.bot_data.get("group_chat_id"),
+        "yes" if application.bot_data.get("group_invite_link") else "no",
     )
 
 
@@ -162,6 +169,12 @@ def main() -> None:
         if await handle_custom_workout_name(update, context):
             return
         if update.effective_chat.type == "private":
+            # Track AI chat quality: user continued conversation instead of using /command
+            if context.user_data.get("last_was_ai_chat"):
+                db = context.bot_data["db"]
+                await db.log_event(update.effective_user.id, None, "ai_chat_success")
+                context.user_data.pop("last_was_ai_chat", None)
+
             # Active conversation flows first (reading, onboarding, etc.)
             if await handle_dm_text(update, context):
                 return
@@ -192,6 +205,30 @@ def main() -> None:
                 )
             elif result["text"]:
                 await update.message.reply_text(result["text"])
+
+            # Mark that the last interaction was AI chat (for quality tracking)
+            context.user_data["last_was_ai_chat"] = True
+
+    # Track AI chat fallback: user sent a /command after AI chat (negative signal)
+    async def ai_fallback_tracker(update: Update, context):
+        """Detect when a user falls back to a /command after an AI chat response."""
+        if (
+            update.effective_chat
+            and update.effective_chat.type == "private"
+            and context.user_data.get("last_was_ai_chat")
+        ):
+            db = context.bot_data["db"]
+            cmd = update.message.text.split()[0] if update.message and update.message.text else "unknown"
+            await db.log_event(update.effective_user.id, None, "ai_chat_fallback", f"cmd={cmd}")
+            context.user_data.pop("last_was_ai_chat", None)
+
+    app.add_handler(
+        MessageHandler(
+            filters.COMMAND & filters.ChatType.PRIVATE,
+            ai_fallback_tracker,
+        ),
+        group=-1,  # Runs before other handlers, doesn't consume the update
+    )
 
     app.add_handler(get_dm_photo_handler())
     app.add_handler(
