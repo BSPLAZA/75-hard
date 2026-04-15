@@ -23,11 +23,13 @@ AWAITING_NAME = 0
 AWAITING_COMMITMENT = 1
 AWAITING_DIET = 2
 AWAITING_BOOK = 3
+AWAITING_PAYMENT = 4
 
 # Callback data
 CB_LOCKED_IN = "onboard_locked_in"
 CB_NOT_FOR_ME = "onboard_not_for_me"
 CB_BOOK_LATER = "onboard_book_later"
+CB_PAID = "onboard_paid"
 
 # Users who don't need to pay
 ALREADY_PAID = ["Yumna"]
@@ -49,7 +51,6 @@ def _fuzzy_match(name: str, candidates: list[str]) -> str | None:
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start in DMs — big welcome, then ask for name."""
     if update.effective_chat.type != "private":
         return ConversationHandler.END
 
@@ -58,7 +59,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user and user["dm_registered"]:
         await update.message.reply_text(
             f"You're already registered, {user['name']}! "
-            f"Sit tight — Bryan will add you to the group when everyone's in."
+            f"Sit tight — you'll get a group invite once everything is set."
         )
         return ConversationHandler.END
 
@@ -84,7 +85,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Match name, then show rules + ask for commitment."""
     db = context.bot_data["db"]
     typed_name = update.message.text.strip()
     matched = _fuzzy_match(typed_name, PARTICIPANTS)
@@ -98,7 +98,6 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return AWAITING_NAME
 
-    # Check if already claimed
     existing = await db.get_user_by_name(matched)
     if existing and existing["dm_registered"]:
         await update.message.reply_text(f"{matched} is already registered by someone else.")
@@ -156,7 +155,6 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def commitment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User tapped 'I'm locked in' or 'Not for me'."""
     query = update.callback_query
     await query.answer()
 
@@ -173,7 +171,7 @@ async def commitment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data.pop("onboard_name", None)
         return ConversationHandler.END
 
-    # They're in — register them
+    # Register them
     db = context.bot_data["db"]
     existing = await db.get_user_by_name(matched)
     if existing:
@@ -182,7 +180,7 @@ async def commitment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await db.add_user(query.from_user.id, matched)
         await db.register_dm(query.from_user.id)
 
-    # Now ask about diet
+    # Ask about diet
     await query.edit_message_text(
         "🍽️ WHAT'S YOUR DIET?\n"
         "\n"
@@ -205,7 +203,6 @@ async def commitment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def receive_diet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User typed their diet plan — save it, ask about book."""
     db = context.bot_data["db"]
     matched = context.user_data.get("onboard_name")
     diet = update.message.text.strip()
@@ -235,7 +232,6 @@ async def receive_diet(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def receive_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User typed their book title — save it, show final confirmation."""
     db = context.bot_data["db"]
     matched = context.user_data.get("onboard_name")
     book = update.message.text.strip()
@@ -244,107 +240,149 @@ async def receive_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user:
         await db.set_current_book(user["telegram_id"], book, started_day=1)
 
-    await _show_final_confirmation(update.effective_user.id, matched, context, book=book)
-    context.user_data.pop("onboard_name", None)
-    return ConversationHandler.END
+    context.user_data["onboard_book"] = book
+    return await _handle_payment_step(update.effective_user.id, matched, context)
 
 
 async def book_later_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User tapped 'I'll decide later' for book."""
     query = update.callback_query
     await query.answer()
     matched = context.user_data.get("onboard_name")
+    context.user_data["onboard_book"] = None
+    return await _handle_payment_step(query.from_user.id, matched, context)
 
-    await _show_final_confirmation(query.from_user.id, matched, context, book=None, edit_message=query)
-    context.user_data.pop("onboard_name", None)
+
+async def _handle_payment_step(user_id, matched, context):
+    """Route to payment or straight to invite based on user type."""
+    if matched == ORGANIZER or matched in ALREADY_PAID:
+        # Skip payment — go straight to welcome + invite
+        await _finalize_and_invite(user_id, matched, context)
+        return ConversationHandler.END
+    else:
+        # Show Venmo step with self-confirm
+        venmo_note = "75 Hard - Locked In"
+        venmo_deeplink = (
+            f"https://venmo.com/{VENMO_USERNAME}"
+            f"?txn=pay&amount={BUY_IN}&note={venmo_note.replace(' ', '%20')}"
+        )
+
+        buttons = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ I've sent the payment", callback_data=CB_PAID),
+        ]])
+
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "💰 LAST STEP — BUY-IN\n"
+                "\n"
+                f"Send ${BUY_IN} to @{VENMO_USERNAME} on Venmo:\n"
+                "\n"
+                f"👉 {venmo_deeplink}\n"
+                "\n"
+                f"Note: \"{venmo_note}\"\n"
+                "\n"
+                "Once you've sent it, tap the button below."
+            ),
+            reply_markup=buttons,
+        )
+        return AWAITING_PAYMENT
+
+
+async def payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User confirms they paid — send invite link."""
+    query = update.callback_query
+    await query.answer()
+
+    matched = context.user_data.get("onboard_name")
+    if not matched:
+        await query.edit_message_text("Something went wrong. Send /start to try again.")
+        return ConversationHandler.END
+
+    db = context.bot_data["db"]
+    user = await db.get_user_by_name(matched)
+    if user:
+        await db._conn.execute(
+            "UPDATE users SET paid = 1 WHERE telegram_id = ?", (user["telegram_id"],)
+        )
+        await db._conn.commit()
+
+    await query.edit_message_text("💰 Payment noted — Bryan will verify.")
+    await _finalize_and_invite(query.from_user.id, matched, context)
     return ConversationHandler.END
 
 
-async def _send_invite_link(user_id, context):
-    """Send the group invite link to a user if available."""
-    invite_link = context.bot_data.get("group_invite_link")
-    if invite_link:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=f"👉 Join the group: {invite_link}"
-        )
-
-
-async def _show_final_confirmation(user_id, matched, context, book=None, edit_message=None):
-    """Show the final confirmation with payment info if needed."""
+async def _finalize_and_invite(user_id, matched, context):
+    """Send the final welcome + group invite link."""
     db = context.bot_data["db"]
     user = await db.get_user_by_name(matched)
-    diet = user["diet_plan"] if user else "not set"
-
-    book_line = f'📖 Starting with: "{book}"' if book else "📖 Book: TBD (DM me when you pick one)"
+    diet = user["diet_plan"] if user and user["diet_plan"] else "not set yet"
+    book = user["current_book"] if user and user["current_book"] else "TBD"
 
     if matched == ORGANIZER:
         text = (
             "✅ YOU'RE IN, BOSS\n"
             "\n"
             f"🍽️ Diet: {diet}\n"
-            f"{book_line}\n"
-            "\n"
-            "You're registered and running this thing.\n"
+            f"📖 Book: {book}\n"
             "\n"
             "🔥 Let's make this legendary."
         )
-        if edit_message:
-            await edit_message.edit_message_text(text)
-        else:
-            await context.bot.send_message(chat_id=user_id, text=text)
-        await _send_invite_link(user_id, context)
-
-    elif matched in ALREADY_PAID:
+    else:
         text = (
             "✅ YOU'RE IN\n"
             "\n"
             f"🍽️ Diet: {diet}\n"
-            f"{book_line}\n"
-            "\n"
-            f"Hey {matched} — your payment is already confirmed. 💰\n"
+            f"📖 Book: {book}\n"
             "\n"
             "🔥 See you on the other side."
         )
-        if edit_message:
-            await edit_message.edit_message_text(text)
-        else:
-            await context.bot.send_message(chat_id=user_id, text=text)
-        await _send_invite_link(user_id, context)
 
-    else:
-        venmo_note = "75 Hard - Locked In"
-        venmo_deeplink = (
-            f"https://venmo.com/{VENMO_USERNAME}"
-            f"?txn=pay&amount={BUY_IN}&note={venmo_note.replace(' ', '%20')}"
+    await context.bot.send_message(chat_id=user_id, text=text)
+
+    # Send invite link
+    invite_link = context.bot_data.get("group_invite_link")
+    if invite_link:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"👉 Join the group: {invite_link}",
         )
-        text = (
-            "💰 BUY-IN: $75\n"
-            "\n"
-            f"🍽️ Diet: {diet}\n"
-            f"{book_line}\n"
-            "\n"
-            f"Last step — send ${BUY_IN} to @{VENMO_USERNAME} on Venmo.\n"
-            "\n"
-            f"👉 Pay here: {venmo_deeplink}\n"
-            "\n"
-            f"Note: \"{venmo_note}\"\n"
-            "\n"
-            "Once Bryan confirms your payment, I'll send\n"
-            "you the group invite link automatically.\n"
-            "\n"
-            "🔥 See you on the other side."
-        )
-        if edit_message:
-            await edit_message.edit_message_text(text)
-        else:
-            await context.bot.send_message(chat_id=user_id, text=text)
 
     await _update_welcome_message(context)
+    await _check_all_joined(context)
+
+    context.user_data.pop("onboard_name", None)
+    context.user_data.pop("onboard_book", None)
+
+
+async def _check_all_joined(context):
+    """If all 5 are registered, celebrate in the group."""
+    db = context.bot_data["db"]
+    users = await db.get_all_users()
+    registered = [u for u in users if u["dm_registered"]]
+
+    if len(registered) >= len(PARTICIPANTS):
+        chat_id = context.bot_data.get("group_chat_id")
+        if chat_id:
+            names = [u["name"] for u in sorted(registered, key=lambda x: x["name"].lower())]
+            text = (
+                "🔥🔥🔥 THE SQUAD IS COMPLETE 🔥🔥🔥\n"
+                "\n"
+                f"{', '.join(names[:-1])} and {names[-1]} are all in.\n"
+                "\n"
+                f"5 people. 75 days. ${BUY_IN * len(names)} on the line.\n"
+                "\n"
+                "Day 1 starts tomorrow at 7 AM ET.\n"
+                "I'll drop the first daily card then.\n"
+                "\n"
+                "No turning back now. 💪"
+            )
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=text)
+            except Exception:
+                pass
 
 
 async def _update_welcome_message(context: ContextTypes.DEFAULT_TYPE):
-    """Edit the group welcome message to reflect who has registered."""
     db = context.bot_data["db"]
     welcome_msg_id = context.bot_data.get("welcome_message_id")
     chat_id = context.bot_data.get("group_chat_id")
@@ -382,7 +420,6 @@ async def _update_welcome_message(context: ContextTypes.DEFAULT_TYPE):
 
 
 def get_onboarding_handler() -> ConversationHandler:
-    """Return the ConversationHandler for DM registration."""
     return ConversationHandler(
         entry_points=[CommandHandler("start", start_command)],
         states={
@@ -399,6 +436,9 @@ def get_onboarding_handler() -> ConversationHandler:
             AWAITING_BOOK: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_book),
                 CallbackQueryHandler(book_later_callback, pattern=f"^{CB_BOOK_LATER}$"),
+            ],
+            AWAITING_PAYMENT: [
+                CallbackQueryHandler(payment_callback, pattern=f"^{CB_PAID}$"),
             ],
         },
         fallbacks=[CommandHandler("start", start_command)],
