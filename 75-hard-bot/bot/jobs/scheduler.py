@@ -53,8 +53,8 @@ async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not chat_id:
         return
 
-    day = get_day_number(CHALLENGE_START_DATE, date.today())
-    if not (1 <= day <= CHALLENGE_DAYS):
+    day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+    if day > CHALLENGE_DAYS:
         return
 
     checkins = await db.get_all_checkins_for_day(day)
@@ -99,8 +99,8 @@ async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 async def nudge_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """11 PM ET -- DM users with incomplete tasks."""
     db = context.bot_data["db"]
-    day = get_day_number(CHALLENGE_START_DATE, date.today())
-    if not (1 <= day <= CHALLENGE_DAYS):
+    day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+    if day > CHALLENGE_DAYS:
         return
 
     checkins = await db.get_all_checkins_for_day(day)

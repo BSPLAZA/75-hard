@@ -273,8 +273,6 @@ async def fail_cancel(
 # ── Handler exports ───────────────────────────────────────────────────
 
 
-def get_admin_handlers() -> list:
-    """Return all admin command handlers."""
 async def admin_test_recap_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -297,6 +295,30 @@ async def admin_test_nudge_command(
     await update.message.reply_text("Nudge triggered.")
 
 
+async def admin_reset_db_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Wipe all checkins, cards, and books — fresh start for testing."""
+    if not _is_admin(update.effective_user.id):
+        await update.message.reply_text("Admin only.")
+        return
+
+    db = context.bot_data["db"]
+    # Backup first
+    import shutil
+    from bot.config import DATABASE_PATH
+    shutil.copy(DATABASE_PATH, DATABASE_PATH + ".backup")
+
+    await db._conn.execute("DELETE FROM daily_checkins")
+    await db._conn.execute("DELETE FROM daily_cards")
+    await db._conn.execute("DELETE FROM books")
+    await db._conn.execute("DELETE FROM feedback")
+    await db._conn.commit()
+    await update.message.reply_text("Database reset. Backup saved. User registrations preserved.")
+
+
+def get_admin_handlers() -> list:
+    """Return all admin command handlers."""
     return [
         CommandHandler("admin_set_group", admin_set_group_command),
         CommandHandler("admin_status", admin_status_command),
@@ -306,6 +328,7 @@ async def admin_test_nudge_command(
         CommandHandler("admin_feedback", admin_feedback_command),
         CommandHandler("admin_resolve", admin_resolve_command),
         CommandHandler("admin_announce", admin_announce_command),
+        CommandHandler("admin_reset_db", admin_reset_db_command),
     ]
 
 
