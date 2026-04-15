@@ -182,11 +182,30 @@ class Database:
             return await cur.fetchone()
 
     async def update_telegram_id(self, name: str, telegram_id: int) -> None:
-        """Re-map a participant name to a new telegram_id and mark DM-registered."""
+        """Re-map a participant name to a new telegram_id and mark DM-registered.
+
+        Also migrates any existing checkin rows from the old placeholder ID.
+        """
+        # Get the old ID before updating
+        user = await self.get_user_by_name(name)
+        old_id = user["telegram_id"] if user else None
+
         await self._conn.execute(
             "UPDATE users SET telegram_id = ?, dm_registered = 1 WHERE name = ?",
             (telegram_id, name),
         )
+
+        # Migrate checkin rows from old placeholder ID to real ID
+        if old_id and old_id != telegram_id:
+            await self._conn.execute(
+                "UPDATE daily_checkins SET telegram_id = ? WHERE telegram_id = ?",
+                (telegram_id, old_id),
+            )
+            await self._conn.execute(
+                "UPDATE books SET telegram_id = ? WHERE telegram_id = ?",
+                (telegram_id, old_id),
+            )
+
         await self._conn.commit()
 
     async def register_dm(self, telegram_id: int) -> None:
