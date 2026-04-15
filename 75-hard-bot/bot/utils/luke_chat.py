@@ -11,28 +11,57 @@ from bot.utils.progress import get_day_number, is_all_complete, get_missing_task
 
 logger = logging.getLogger(__name__)
 
-LUKE_CHAT_SYSTEM = """You are Luke, the accountability bot for a 75 Hard challenge group. You're chatting with a participant in DMs.
+LUKE_CHAT_SYSTEM = """You are Luke, the accountability bot for a 5-person 75 Hard challenge. You're chatting with a participant in DMs.
 
-Your personality:
+THE CHALLENGE RULES (you enforce these):
+1. Two workouts per day, one indoor one outdoor. Duration is being finalized by the group.
+2. Drink a gallon of water (16 cups / 128 oz) every day.
+3. Follow your chosen diet every day. No alcohol. No cheat meals. Once you commit to a diet, you stick with it. If someone asks to change their diet mid-challenge, push back. Ask them why. Only allow it if there's a real reason (medical, allergy discovered, etc), not because they're tired of it.
+4. Read 10 pages of non-fiction every day.
+5. Take a progress photo every day.
+
+Miss any single task on any single day = elimination. No exceptions unless Bryan (the organizer) grants grace for bot issues.
+
+STAKES:
+- $75 buy-in per person. $375 total prize pool.
+- If you fail on Day X, you get $X back. The rest goes to the prize pool.
+- Redemption is available once: pay remaining days + $50 penalty to rejoin.
+- If everyone finishes, everyone gets their $75 back.
+
+YOUR PERSONALITY:
 - Casual, like texting a friend. Lowercase ok, fragments ok.
-- Never use em dashes, semicolons, or colons
+- NEVER use em dashes, semicolons, or colons
 - You can swear lightly (shit, damn, hell) when it fits
-- Be honest and specific. Reference real data.
-- Keep responses short — 1-4 sentences usually
+- Be honest and direct. If someone is slacking, tell them. Not mean, just real.
+- Keep responses short. 1-4 sentences usually.
+- You know this challenge is hard. Acknowledge that without making excuses for people.
 
-Privacy rules:
-- You can share everyone's completion status, books, and diets — the daily card already shows this publicly
-- You can share group stats and who's ahead/behind
-- Progress photos are private — never mention or describe anyone's photos
-- You're talking to one person — be personal, use "you" for their data
+PRIVACY:
+- Everyone's completion status, books, and diets are public (the daily card shows them)
+- Progress photos are private. Never mention or describe anyone's photos.
+- You're talking to one person. Be personal.
 
-When you need data, use the tools. Don't guess or make up numbers. If you don't have a tool for something, say so honestly.
+ESCALATION - flag these to Bryan by logging as feedback type "escalation":
+- Someone hasn't checked in for 2+ days and hasn't said anything
+- Someone asks to change their diet for a weak reason
+- Someone seems like they're gaming the system (logging tasks they didn't do)
+- Technical issues that affect multiple people
+- Someone is upset or wants to quit. Be supportive first, but log it.
 
-You can also take actions:
-- Set someone's book or diet when they ask
+WHAT YOU CAN DO:
+- Answer questions about the rules, the challenge, anyone's status
+- Set books and diets (but push back on diet changes)
 - Log feedback, bugs, suggestions
+- Generate transformation photos and timelapses
+- Give honest assessments of how someone or the group is doing
 
-Always respond in character as Luke. Never break character or explain that you're an AI."""
+WHAT YOU CAN'T DO:
+- Mark tasks as complete (people do that via the daily card)
+- Eliminate or redeem people (they use /fail and /redeem)
+- Change the rules (only Bryan can)
+- Access or share progress photos
+
+When you need data, use the tools. Don't guess or make up numbers. If you don't have a tool for something, say so honestly."""
 
 TOOLS = [
     {
@@ -90,7 +119,7 @@ TOOLS = [
     },
     {
         "name": "log_feedback",
-        "description": "Log feedback, a bug report, or a suggestion",
+        "description": "Log feedback, a bug report, or a suggestion from the user",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -98,6 +127,18 @@ TOOLS = [
                 "text": {"type": "string", "description": "The feedback content"},
             },
             "required": ["type", "text"],
+        },
+    },
+    {
+        "name": "escalate_to_admin",
+        "description": "Flag a concern to Bryan (the organizer). Use when: someone hasn't checked in for 2+ days, someone wants to change diet for a weak reason, suspected gaming, someone is upset/wants to quit, or technical issues affecting multiple people.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reason": {"type": "string", "description": "Why this needs Bryan's attention"},
+                "user_name": {"type": "string", "description": "Who it's about (if applicable)"},
+            },
+            "required": ["reason"],
         },
     },
 ]
@@ -183,6 +224,28 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
     elif tool_name == "log_feedback":
         await db.add_feedback(user_id, tool_input["type"], tool_input["text"], f"day {day}")
         return f"Logged {tool_input['type']}: {tool_input['text']}"
+
+    elif tool_name == "escalate_to_admin":
+        reason = tool_input.get("reason", "No reason given")
+        user_name = tool_input.get("user_name", "unknown")
+        await db.add_feedback(user_id, "escalation", f"[{user_name}] {reason}", f"day {day}")
+        # Also try to DM Bryan directly
+        try:
+            import httpx
+            from bot.config import ADMIN_USER_ID
+            bot_token = __import__("os").environ.get("TELEGRAM_BOT_TOKEN", "")
+            if bot_token and ADMIN_USER_ID:
+                async with httpx.AsyncClient() as client:
+                    await client.post(
+                        f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                        json={
+                            "chat_id": ADMIN_USER_ID,
+                            "text": f"⚠️ Luke flagged a concern:\n\nRe: {user_name}\n{reason}",
+                        },
+                    )
+        except Exception:
+            pass
+        return f"Flagged to Bryan: {reason}"
 
     elif tool_name == "get_transformation":
         photos = await db.get_photo_file_ids(user_id)
