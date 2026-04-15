@@ -40,6 +40,8 @@ class Database:
                 paid INTEGER DEFAULT 0,
                 active INTEGER DEFAULT 1,
                 failed_day INTEGER,
+                redeemed INTEGER DEFAULT 0,
+                redemption_fee INTEGER DEFAULT 0,
                 dm_registered INTEGER DEFAULT 0,
                 current_book TEXT,
                 diet_plan TEXT,
@@ -99,11 +101,17 @@ class Database:
 
     async def _migrate(self) -> None:
         """Add columns that may not exist in older databases."""
-        try:
-            await self._conn.execute("ALTER TABLE users ADD COLUMN diet_plan TEXT")
-            await self._conn.commit()
-        except Exception:
-            pass  # Column already exists
+        migrations = [
+            "ALTER TABLE users ADD COLUMN diet_plan TEXT",
+            "ALTER TABLE users ADD COLUMN redeemed INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN redemption_fee INTEGER DEFAULT 0",
+        ]
+        for sql in migrations:
+            try:
+                await self._conn.execute(sql)
+                await self._conn.commit()
+            except Exception:
+                pass
 
     # ── users ──────────────────────────────────────────────────────────
 
@@ -166,6 +174,14 @@ class Database:
         await self._conn.execute(
             "UPDATE users SET active = 0, failed_day = ? WHERE telegram_id = ?",
             (failed_day, telegram_id),
+        )
+        await self._conn.commit()
+
+    async def redeem_user(self, telegram_id: int, fee: int) -> None:
+        """Reactivate a failed user with a redemption fee."""
+        await self._conn.execute(
+            "UPDATE users SET active = 1, failed_day = NULL, redeemed = 1, redemption_fee = ? WHERE telegram_id = ?",
+            (fee, telegram_id),
         )
         await self._conn.commit()
 

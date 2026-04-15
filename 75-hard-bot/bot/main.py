@@ -14,7 +14,7 @@ from telegram.ext import (
 
 from bot.config import BOT_TOKEN, DATABASE_PATH, GROUP_CHAT_ID, PARTICIPANTS
 from bot.database import Database
-from bot.handlers.admin import get_admin_handlers, get_fail_handler
+from bot.handlers.admin import get_admin_handlers, get_fail_handler, get_redeem_handler
 from bot.handlers.daily_card import get_card_command_handler
 from bot.handlers.diet import get_diet_callback_handler
 from bot.handlers.feedback import get_feedback_handlers
@@ -129,6 +129,7 @@ def main() -> None:
     # Conversation handlers first (they need priority)
     app.add_handler(get_onboarding_handler())
     app.add_handler(get_fail_handler())
+    app.add_handler(get_redeem_handler())
 
     # Card command
     app.add_handler(get_card_command_handler())

@@ -241,9 +241,15 @@ async def fail_confirm(
     # Eliminate the user
     await db.eliminate_user(user_id, failed_day=day_number)
 
+    remaining_days = 75 - day_number
+    redemption_cost = remaining_days + 25
+
     await update.message.reply_text(
         f"You've been eliminated on Day {day_number}. "
-        f"You completed {days_completed} days. Respect."
+        f"You completed {days_completed} days. Respect.\n\n"
+        f"Want back in? Type /redeem\n"
+        f"Cost: ${remaining_days} (remaining days) + $25 (penalty) = ${redemption_cost}\n"
+        f"The $25 goes into the prize pool. You can only redeem once."
     )
 
     # Post farewell to the group
@@ -281,6 +287,120 @@ async def fail_cancel(
 ) -> int:
     """Handle /cancel during the fail flow."""
     await update.message.reply_text("Cancelled. You're still in!")
+    return ConversationHandler.END
+
+
+# ── /redeem conversation ─────────────────────────────────────────────
+
+REDEEM_AWAITING_CONFIRM = 10
+
+
+async def redeem_start(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Handle /redeem — show cost and ask for confirmation. DMs only."""
+    if update.effective_chat.type != "private":
+        await update.message.reply_text("Use /redeem in DMs only.")
+        return ConversationHandler.END
+
+    db = context.bot_data["db"]
+    user = await db.get_user(update.effective_user.id)
+    if not user:
+        await update.message.reply_text("Register first! DM me /start")
+        return ConversationHandler.END
+
+    if user["active"]:
+        await update.message.reply_text("You're still active. No need to redeem.")
+        return ConversationHandler.END
+
+    if user.get("redeemed"):
+        await update.message.reply_text("You've already used your one redemption. No second chances.")
+        return ConversationHandler.END
+
+    today = date.today()
+    day_number = max(get_day_number(CHALLENGE_START_DATE, today), 1)
+    remaining_days = 75 - day_number
+    penalty = 25
+    total_cost = remaining_days + penalty
+
+    context.user_data["redeem_cost"] = total_cost
+    context.user_data["redeem_penalty"] = penalty
+    context.user_data["redeem_remaining"] = remaining_days
+
+    venmo_note = "75 Hard - Redemption"
+    venmo_deeplink = f"https://venmo.com/bryanedit?txn=pay&amount={total_cost}&note={venmo_note.replace(' ', '%20')}"
+
+    await update.message.reply_text(
+        f"REDEMPTION\n"
+        f"\n"
+        f"You failed on Day {user['failed_day']}. Here's your way back.\n"
+        f"\n"
+        f"Cost breakdown:\n"
+        f"  ${remaining_days} for the {remaining_days} remaining days\n"
+        f"  ${penalty} redemption penalty (goes to prize pool)\n"
+        f"  ${total_cost} total\n"
+        f"\n"
+        f"Pay here: {venmo_deeplink}\n"
+        f"\n"
+        f"You rejoin at Day {day_number}. All tasks reset for today.\n"
+        f"You only get one redemption. No third chances.\n"
+        f"\n"
+        f"Type REDEEM after you've sent payment."
+    )
+    return REDEEM_AWAITING_CONFIRM
+
+
+async def redeem_confirm(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Process the REDEEM confirmation."""
+    text = update.message.text.strip()
+
+    if text != "REDEEM":
+        await update.message.reply_text("Cancelled. Type /redeem to try again.")
+        return ConversationHandler.END
+
+    db = context.bot_data["db"]
+    user_id = update.effective_user.id
+    user = await db.get_user(user_id)
+    name = user["name"] if user else update.effective_user.first_name
+    penalty = context.user_data.pop("redeem_penalty", 25)
+    total_cost = context.user_data.pop("redeem_cost", 0)
+
+    # Reactivate
+    await db.redeem_user(user_id, fee=total_cost)
+
+    # Create today's checkin
+    today = date.today()
+    day_number = max(get_day_number(CHALLENGE_START_DATE, today), 1)
+    await db.create_checkin(user_id, day_number, today.isoformat())
+
+    await update.message.reply_text(
+        f"You're back. Day {day_number} starts now.\n"
+        f"\n"
+        f"${penalty} added to the prize pool. Don't waste this."
+    )
+
+    # Announce in group
+    group_chat_id = context.bot_data.get("group_chat_id")
+    if group_chat_id:
+        active_users = await db.get_active_users()
+        try:
+            await context.bot.send_message(
+                chat_id=group_chat_id,
+                text=(
+                    f"{name} just redeemed back into the challenge. "
+                    f"Paid ${total_cost} to get back in. ${penalty} added to the prize pool.\n"
+                    f"\n"
+                    f"{len(active_users)} standing."
+                ),
+            )
+        except Exception:
+            pass
+
+        await refresh_card(context, day_number)
+
+    context.user_data.pop("redeem_remaining", None)
     return ConversationHandler.END
 
 
@@ -493,6 +613,21 @@ def get_fail_handler() -> ConversationHandler:
             FAIL_AWAITING_CONFIRM: [
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND, fail_confirm
+                ),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", fail_cancel)],
+    )
+
+
+def get_redeem_handler() -> ConversationHandler:
+    """Return the /redeem ConversationHandler."""
+    return ConversationHandler(
+        entry_points=[CommandHandler("redeem", redeem_start)],
+        states={
+            REDEEM_AWAITING_CONFIRM: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND, redeem_confirm
                 ),
             ],
         },
