@@ -337,6 +337,50 @@ async def admin_test_recap_command(
         await update.message.reply_text(f"Recap failed:\n{traceback.format_exc()[-500:]}")
 
 
+async def admin_test_morning_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Test the AI morning message."""
+    if not _is_admin(update.effective_user.id):
+        await update.message.reply_text("Admin only.")
+        return
+    try:
+        from bot.utils.luke_ai import generate_morning_message
+        from bot.utils.progress import get_day_number, is_all_complete, get_missing_tasks
+        from bot.config import CHALLENGE_START_DATE
+
+        db = context.bot_data["db"]
+        day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+
+        # For testing: use today's checkins AS yesterday's data so we can see
+        # the AI react to actual DB state
+        checkins_raw = await db.get_all_checkins_for_day(day)
+        checkins = [dict(c) for c in checkins_raw]
+
+        yesterday_summary = None
+        if checkins:
+            completed = [c["name"] for c in checkins if is_all_complete(c)]
+            incomplete = [(c["name"], get_missing_tasks(c)) for c in checkins if not is_all_complete(c)]
+            completers = sorted([c for c in checkins if c.get("completed_at")], key=lambda c: c["completed_at"] or "")
+            first = completers[0]["name"] if completers else None
+            books = [(c["name"], c.get("book_title")) for c in checkins if c.get("book_title")]
+            yesterday_summary = {
+                "day": day,
+                "completed": completed,
+                "incomplete": incomplete,
+                "first_finisher": first,
+                "books": books,
+            }
+
+        active = await db.get_active_users()
+        all_users = await db.get_all_users()
+        msg = await generate_morning_message(day + 1, len(active), len(all_users), yesterday_summary)
+        await update.message.reply_text(msg or "AI generation failed - check API key.")
+    except Exception as e:
+        import traceback
+        await update.message.reply_text(f"Failed:\n{traceback.format_exc()[-500:]}")
+
+
 async def admin_test_nudge_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -431,6 +475,7 @@ def get_admin_handlers() -> list:
         CommandHandler("admin_status", admin_status_command),
         CommandHandler("admin_reset_day", admin_reset_day_command),
         CommandHandler("admin_test_recap", admin_test_recap_command),
+        CommandHandler("admin_test_morning", admin_test_morning_command),
         CommandHandler("admin_test_nudge", admin_test_nudge_command),
         CommandHandler("admin_feedback", admin_feedback_command),
         CommandHandler("admin_resolve", admin_resolve_command),

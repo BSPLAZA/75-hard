@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes
 from bot.config import ADMIN_USER_ID, CHALLENGE_DAYS, CHALLENGE_START_DATE
 from bot.handlers.daily_card import post_daily_card
 from bot.utils.easter_eggs import post_milestone_if_needed
+from bot.utils.luke_ai import generate_morning_message
 from bot.utils.progress import get_day_number, get_missing_tasks, is_all_complete
 
 ET = pytz.timezone("US/Eastern")
@@ -22,27 +23,44 @@ async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     chat_id = context.bot_data.get("group_chat_id")
 
-    # Day 1: post participant introductions before the card
-    if day == 1 and chat_id:
-        users = await db.get_active_users()
-        lines = [
-            "🔥 DAY 1 — LET'S GO\n",
-            "Meet your squad:\n",
-        ]
-        for u in sorted(users, key=lambda x: x["name"].lower()):
-            diet = u.get("diet_plan") or "not set yet"
-            book = u.get("current_book") or "TBD"
-            lines.append(f"  {u['name']}")
-            lines.append(f"    🍽️ {diet}")
-            lines.append(f'    📖 "{book}"')
-            lines.append("")
+    # Generate AI morning briefing (replaces static templates)
+    if chat_id:
+        yesterday_summary = None
+        if day > 1:
+            prev_checkins = await db.get_all_checkins_for_day(day - 1)
+            prev_dicts = [dict(c) for c in prev_checkins]
+            completed_names = [c["name"] for c in prev_dicts if is_all_complete(c)]
+            incomplete_list = [
+                (c["name"], get_missing_tasks(c))
+                for c in prev_dicts if not is_all_complete(c)
+            ]
+            # Find first finisher
+            completers = [c for c in prev_dicts if c.get("completed_at")]
+            completers.sort(key=lambda c: c["completed_at"])
+            first = completers[0]["name"] if completers else None
+            books = [(c["name"], c.get("book_title")) for c in prev_dicts if c.get("book_title")]
 
-        lines.append("75 days starts now. No one knows who they'll be on Day 75.")
+            yesterday_summary = {
+                "day": day - 1,
+                "completed": completed_names,
+                "incomplete": incomplete_list,
+                "first_finisher": first,
+                "books": books,
+            }
 
-        try:
-            await context.bot.send_message(chat_id=chat_id, text="\n".join(lines))
-        except Exception:
-            pass
+        active_users = await db.get_active_users()
+        all_users = await db.get_all_users()
+        ai_message = await generate_morning_message(
+            day_number=day,
+            active_count=len(active_users),
+            total_count=len(all_users),
+            yesterday_summary=yesterday_summary,
+        )
+        if ai_message:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=ai_message)
+            except Exception:
+                pass
 
     await post_daily_card(context)
 

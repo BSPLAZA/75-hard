@@ -9,6 +9,7 @@ ADMIN_USER_ID = int(os.environ.get("ADMIN_USER_ID", "0"))
 GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID", "0"))
 CHALLENGE_START_DATE = date.fromisoformat(os.environ.get("CHALLENGE_START_DATE", "2026-04-15"))
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "data/75hard.db")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 CHALLENGE_DAYS = 75
 WATER_GOAL = 16  # cups

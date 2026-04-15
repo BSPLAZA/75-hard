@@ -6,6 +6,7 @@ export ADMIN_USER_ID="6740203693"
 export CHALLENGE_START_DATE="2026-04-15"
 export DATABASE_PATH="data/test.db"
 export GROUP_CHAT_ID="0"
+export ANTHROPIC_API_KEY="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"
 
 cd "$(dirname "$0")"
 .venv/bin/python -m bot.main
