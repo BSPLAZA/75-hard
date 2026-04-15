@@ -1,12 +1,21 @@
-app = "75-hard-bot"
-primary_region = "ewr"
+# fly.toml — lockedin-75hard-bot
+app = 'lockedin-75hard-bot'
+primary_region = 'ewr'
 
 [build]
-  builder = "paketobuildpacks/builder:base"
-
-[mounts]
-  source = "data"
-  destination = "/data"
 
 [env]
-  DATABASE_PATH = "/data/75hard.db"
+  DATABASE_PATH = '/data/75hard.db'
+
+[[mounts]]
+  source = 'data'
+  destination = '/data'
+
+# No HTTP service — this is a worker bot (polling)
+[processes]
+  worker = 'python -m bot.main'
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1
