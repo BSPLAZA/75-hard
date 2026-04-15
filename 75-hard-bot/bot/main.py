@@ -198,6 +198,15 @@ def main() -> None:
                 await timelapse_command(update, context)
                 return
 
+            # Refresh the daily card if a tracker action was taken
+            if result.get("refresh_card"):
+                from bot.handlers.daily_card import refresh_card
+                from bot.utils.progress import get_day_number as _gdn
+                from bot.config import CHALLENGE_START_DATE as _csd
+                from datetime import date as _d
+                day = max(_gdn(_csd, _d.today()), 1)
+                await refresh_card(context, day)
+
             if result.get("cover_url"):
                 await update.message.reply_photo(
                     photo=result["cover_url"],

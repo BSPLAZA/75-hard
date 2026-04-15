@@ -132,6 +132,54 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
+        "name": "log_workout_dm",
+        "description": "Log a workout for the user from DM. Use when user says they did a workout, went for a run, hit the gym, etc. This updates the daily card in the group.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "location": {"type": "string", "enum": ["outdoor", "indoor"], "description": "Was it outdoor or indoor"},
+                "workout_type": {"type": "string", "description": "Type of workout: run, lift, yoga, bike, swim, or other description"},
+            },
+            "required": ["location"],
+        },
+    },
+    {
+        "name": "log_water_dm",
+        "description": "Log water intake for the user from DM. Use when user mentions drinking water, having cups/glasses of water, etc. This updates the daily card.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cups": {"type": "integer", "description": "Number of cups to add (1 cup = 8oz). Or set absolute count if user says 'I've had 10 cups total'."},
+                "mode": {"type": "string", "enum": ["add", "set"], "description": "'add' to increment by cups, 'set' to set the total. Default 'add'."},
+            },
+            "required": ["cups"],
+        },
+    },
+    {
+        "name": "confirm_diet_dm",
+        "description": "Mark the user's diet as confirmed for today. Use when user says they followed their diet, stayed on track, etc. This updates the daily card.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "fix_water",
+        "description": "Correct the user's water count for today. Use when user says they added too many waters, need to fix their water count, etc.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"cups": {"type": "integer", "description": "Correct total cup count for today"}},
+            "required": ["cups"],
+        },
+    },
+    {
+        "name": "undo_workout",
+        "description": "Undo the user's last workout for today. Use when user says they incorrectly logged a workout, marked the wrong workout, etc.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "undo_diet",
+        "description": "Un-confirm the user's diet for today. Use when user admits they cheated, had alcohol, broke their diet, etc.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
         "name": "get_transformation",
         "description": "Generate a side-by-side photo comparing the user's Day 1 photo to their most recent photo. Use when user asks about their transformation, progress photos, before/after, etc.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
@@ -312,6 +360,58 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
             return f"Last entry removed. {len(entries)} entries remaining today."
         return "Nothing to undo — no entries logged today."
 
+    elif tool_name == "log_workout_dm":
+        location = tool_input.get("location", "outdoor")
+        wtype = tool_input.get("workout_type", "workout")
+        checkin = await db.get_checkin(user_id, day)
+        if not checkin:
+            await db.create_checkin(user_id, day, date.today().isoformat())
+        slot, just_completed = await db.log_workout(user_id, day, wtype, location)
+        return f"REFRESH_CARD: Workout logged — {location} {wtype}, slot {slot}/2. {'Both done!' if slot == 2 else ''}"
+
+    elif tool_name == "log_water_dm":
+        cups = tool_input.get("cups", 1)
+        mode = tool_input.get("mode", "add")
+        checkin = await db.get_checkin(user_id, day)
+        if not checkin:
+            await db.create_checkin(user_id, day, date.today().isoformat())
+        if mode == "set":
+            await db.set_water(user_id, day, cups)
+            new_count = cups
+        else:
+            for _ in range(cups):
+                new_count, _ = await db.increment_water(user_id, day)
+        checkin = await db.get_checkin(user_id, day)
+        new_count = checkin["water_cups"] if checkin else 0
+        return f"REFRESH_CARD: Water updated — {new_count}/16 cups"
+
+    elif tool_name == "confirm_diet_dm":
+        checkin = await db.get_checkin(user_id, day)
+        if not checkin:
+            await db.create_checkin(user_id, day, date.today().isoformat())
+            checkin = await db.get_checkin(user_id, day)
+        if not checkin["diet_done"]:
+            await db.toggle_diet(user_id, day)
+        return "REFRESH_CARD: Diet confirmed for today"
+
+    elif tool_name == "fix_water":
+        cups = max(0, min(16, tool_input.get("cups", 0)))
+        await db.set_water(user_id, day, cups)
+        return f"REFRESH_CARD: Water corrected to {cups}/16 cups"
+
+    elif tool_name == "undo_workout":
+        result = await db.undo_last_workout(user_id, day)
+        if result:
+            return f"REFRESH_CARD: Last workout removed. Log it again when ready."
+        return "No workouts to undo today."
+
+    elif tool_name == "undo_diet":
+        checkin = await db.get_checkin(user_id, day)
+        if checkin and checkin["diet_done"]:
+            await db.toggle_diet(user_id, day)
+            return "REFRESH_CARD: Diet un-confirmed. Be honest with yourself."
+        return "Diet wasn't confirmed today — nothing to undo."
+
     elif tool_name == "escalate_to_admin":
         reason = tool_input.get("reason", "No reason given")
         user_name = tool_input.get("user_name", "unknown")
@@ -376,6 +476,7 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
         # Process tool calls (may need multiple rounds)
         cover_url = None
         media = None
+        context_data = {"refresh_card": False}
         while response.stop_reason == "tool_use":
             tool_results = []
             for block in response.content:
@@ -394,6 +495,9 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
                     # Capture media requests
                     if result.startswith("MEDIA:"):
                         media = result.split("MEDIA:")[1]
+                    # Capture card refresh signals
+                    if result.startswith("REFRESH_CARD:"):
+                        context_data["refresh_card"] = True
 
             messages.append({"role": "assistant", "content": response.content})
             messages.append({"role": "user", "content": tool_results})
@@ -418,9 +522,9 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
         latency_ms = int((time.monotonic() - start) * 1000)
         await db.log_event(user_id, None, "ai_chat", f"msg_len={len(message)}", latency_ms=latency_ms)
 
-        return {"text": text, "cover_url": cover_url, "media": media}
+        return {"text": text, "cover_url": cover_url, "media": media, "refresh_card": context_data["refresh_card"]}
 
     except Exception as e:
         logger.error("Luke chat failed: %s", e)
         await db.log_event(user_id, None, "ai_chat", error=str(e))
-        return {"text": "something went wrong. try a /command instead", "cover_url": None, "media": None}
+        return {"text": "something went wrong. try a /command instead", "cover_url": None, "media": None, "refresh_card": False}
