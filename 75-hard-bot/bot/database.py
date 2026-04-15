@@ -96,6 +96,17 @@ class Database:
                 chat_id INTEGER
             );
 
+            CREATE TABLE IF NOT EXISTS diet_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER NOT NULL,
+                day_number INTEGER NOT NULL,
+                entry_text TEXT NOT NULL,
+                extracted_value REAL,
+                extracted_unit TEXT,
+                extracted_json TEXT,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS event_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -464,6 +475,48 @@ class Database:
             (diet_plan, telegram_id),
         )
         await self._conn.commit()
+
+    # ── diet log ───────────────────────────────────────────────────────
+
+    async def log_diet_entry(
+        self,
+        telegram_id: int,
+        day_number: int,
+        entry_text: str,
+        extracted_value: float | None = None,
+        extracted_unit: str | None = None,
+        extracted_json: str | None = None,
+    ) -> int:
+        """Log a food/diet entry. Returns the entry ID."""
+        cursor = await self._conn.execute(
+            "INSERT INTO diet_log (telegram_id, day_number, entry_text, extracted_value, extracted_unit, extracted_json) VALUES (?, ?, ?, ?, ?, ?)",
+            (telegram_id, day_number, entry_text, extracted_value, extracted_unit, extracted_json),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_diet_entries(self, telegram_id: int, day_number: int) -> list[dict]:
+        """Get all diet entries for a user on a given day."""
+        async with self._conn.execute(
+            "SELECT * FROM diet_log WHERE telegram_id = ? AND day_number = ? ORDER BY timestamp",
+            (telegram_id, day_number),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def delete_last_diet_entry(self, telegram_id: int, day_number: int) -> bool:
+        """Delete the most recent diet entry for today. Returns True if something was deleted."""
+        async with self._conn.execute(
+            "SELECT id FROM diet_log WHERE telegram_id = ? AND day_number = ? ORDER BY id DESC LIMIT 1",
+            (telegram_id, day_number),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return False
+        await self._conn.execute("DELETE FROM diet_log WHERE id = ?", (row["id"],))
+        await self._conn.commit()
+        return True
+
+    # ── books ─────────────────────────────────────────────────────────
 
     async def set_current_book(
         self,

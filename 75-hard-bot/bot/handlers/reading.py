@@ -160,6 +160,17 @@ async def handle_dm_text(
     db = context.bot_data["db"]
     user_id = update.effective_user.id
 
+    # Step: awaiting diet plan input (from /setdiet with no args)
+    if context.user_data.get("awaiting_diet_input"):
+        context.user_data.pop("awaiting_diet_input", None)
+        plan = update.message.text.strip()
+        await db.set_diet_plan(user_id, plan)
+        await update.message.reply_text(
+            f'diet set to "{plan}" 🍽️\n\n'
+            f"just DM me what you eat throughout the day and i'll track it for you"
+        )
+        return True
+
     # Step: awaiting book title
     if context.user_data.get("awaiting_book_title"):
         title = update.message.text.strip()
@@ -278,9 +289,11 @@ async def setbook_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
         if user["current_book"]:
-            await update.message.reply_text(f'Your current book is "{user["current_book"]}". To change it: /setbook <new title>')
+            await update.message.reply_text(f'you\'re reading "{user["current_book"]}". to change it: /setbook <new title>')
         else:
-            await update.message.reply_text("Usage: /setbook <book title>")
+            context.user_data["awaiting_book_title"] = True
+            context.user_data["reading_new_book"] = True
+            await update.message.reply_text("what book are you reading? type the title:")
         return
 
     title = " ".join(context.args)
@@ -303,23 +316,49 @@ async def setbook_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def setdiet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/setdiet <plan> — set or update your diet plan anytime."""
+    """/setdiet — set your diet plan. Once set, it's locked for the challenge."""
     db = context.bot_data["db"]
     user = await db.get_user(update.effective_user.id)
     if not user:
         await update.message.reply_text("Register first! DM me /start")
         return
 
+    user = dict(user)
+    existing_diet = user.get("diet_plan")
+
     if not context.args:
-        if user.get("diet_plan"):
-            await update.message.reply_text(f'Your current diet is "{user["diet_plan"]}". To change it: /setdiet <new plan>')
+        if existing_diet:
+            await update.message.reply_text(
+                f'your diet is set to: "{existing_diet}"\n\n'
+                f"DM me what you eat throughout the day and i'll track it for you.\n\n"
+                f"if you made an error, use /setdiet <corrected plan>"
+            )
         else:
-            await update.message.reply_text("Usage: /setdiet <your diet plan>")
+            context.user_data["awaiting_diet_input"] = True
+            await update.message.reply_text(
+                "what's your diet plan? some examples:\n\n"
+                "  high protein 170g per day\n"
+                "  calorie deficit 1800 cal\n"
+                "  clean eating, no processed food\n"
+                "  keto, under 20g carbs\n\n"
+                "type your plan below:"
+            )
         return
 
     plan = " ".join(context.args)
+
+    if existing_diet:
+        await update.message.reply_text(
+            f'diet updated from "{existing_diet}" to "{plan}"\n\n'
+            f"DM me what you eat and i'll keep a running tally 🍽️"
+        )
+    else:
+        await update.message.reply_text(
+            f'diet set to "{plan}" 🍽️\n\n'
+            f"just DM me what you eat throughout the day and i'll track it for you"
+        )
+
     await db.set_diet_plan(update.effective_user.id, plan)
-    await update.message.reply_text(f'Diet set to "{plan}" 🍽️')
 
 
 async def bookshelf_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

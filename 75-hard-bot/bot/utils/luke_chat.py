@@ -101,12 +101,35 @@ TOOLS = [
     },
     {
         "name": "set_diet",
-        "description": "Set or change the user's diet plan",
+        "description": "Set or change the user's diet plan/goal. After setting, tell the user they can DM you what they eat and you'll track it.",
         "input_schema": {
             "type": "object",
-            "properties": {"plan": {"type": "string", "description": "Diet plan description"}},
+            "properties": {"plan": {"type": "string", "description": "Diet plan description including any numeric goals like '170g protein' or '1800 calories'"}},
             "required": ["plan"],
         },
+    },
+    {
+        "name": "log_food",
+        "description": "Log a food/meal/snack that the user ate. Use whenever the user mentions eating, drinking (non-water), having a meal, snack, protein shake, etc. Extract the relevant metric based on their diet plan (protein grams, calories, etc). If their diet is 'clean eating', just note whether the food is clean or not.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entry_text": {"type": "string", "description": "What the user said they ate, verbatim"},
+                "extracted_value": {"type": "number", "description": "Numeric value extracted (e.g., 30 for 30g protein, 400 for 400 calories). Null if diet is qualitative like clean eating."},
+                "extracted_unit": {"type": "string", "description": "Unit of the extracted value: 'protein_g', 'calories', 'carbs_g', 'fat_g', or 'clean' for clean eating"},
+            },
+            "required": ["entry_text"],
+        },
+    },
+    {
+        "name": "get_diet_progress",
+        "description": "Get the user's diet log for today — all entries and running tally. Use when user asks how their diet is going, what they've eaten, how much protein/calories they have left, etc.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "undo_last_food",
+        "description": "Remove the last food entry the user logged today. Use when user says they logged something wrong or wants to remove the last entry.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "get_transformation",
@@ -219,12 +242,75 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
         return f'Book set to "{title}". Cover URL: {cover_url or "none found"}'
 
     elif tool_name == "set_diet":
+        user = await db.get_user(user_id)
+        existing = dict(user).get("diet_plan") if user else None
         await db.set_diet_plan(user_id, tool_input["plan"])
-        return f'Diet updated to "{tool_input["plan"]}"'
+        if existing:
+            return f'Diet changed from "{existing}" to "{tool_input["plan"]}". Note: diet changes should only be for corrections, not because the diet is hard.'
+        return f'Diet set to "{tool_input["plan"]}". User can now DM food entries for tracking.'
 
     elif tool_name == "log_feedback":
         await db.add_feedback(user_id, tool_input["type"], tool_input["text"], f"day {day}")
         return f"Logged {tool_input['type']}: {tool_input['text']}"
+
+    elif tool_name == "log_food":
+        entry_text = tool_input.get("entry_text", "")
+        extracted_value = tool_input.get("extracted_value")
+        extracted_unit = tool_input.get("extracted_unit")
+        import json as _json
+        extracted_json = _json.dumps(tool_input) if extracted_value else None
+
+        await db.log_diet_entry(
+            user_id, day, entry_text,
+            extracted_value=extracted_value,
+            extracted_unit=extracted_unit,
+            extracted_json=extracted_json,
+        )
+
+        # Build running tally
+        entries = await db.get_diet_entries(user_id, day)
+        user = await db.get_user(user_id)
+        diet_plan = dict(user).get("diet_plan", "not set") if user else "not set"
+
+        if extracted_unit and extracted_value is not None:
+            total = sum(e.get("extracted_value", 0) or 0 for e in entries if e.get("extracted_unit") == extracted_unit)
+            return f"Logged: {entry_text}. Running total: {total:.0f} {extracted_unit}. Diet goal: {diet_plan}. {len(entries)} entries today."
+        else:
+            return f"Logged: {entry_text}. {len(entries)} entries today. Diet goal: {diet_plan}."
+
+    elif tool_name == "get_diet_progress":
+        entries = await db.get_diet_entries(user_id, day)
+        user = await db.get_user(user_id)
+        diet_plan = dict(user).get("diet_plan", "not set") if user else "not set"
+
+        if not entries:
+            return f"No food logged today. Diet goal: {diet_plan}. Tell me what you eat and I'll track it."
+
+        lines = [f"Diet goal: {diet_plan}", f"Entries today ({len(entries)}):"]
+        for e in entries:
+            val = f" ({e['extracted_value']:.0f} {e['extracted_unit']})" if e.get("extracted_value") else ""
+            lines.append(f"  - {e['entry_text']}{val}")
+
+        # Sum by unit
+        units = {}
+        for e in entries:
+            if e.get("extracted_value") and e.get("extracted_unit"):
+                unit = e["extracted_unit"]
+                units[unit] = units.get(unit, 0) + e["extracted_value"]
+
+        if units:
+            lines.append("Totals:")
+            for unit, total in units.items():
+                lines.append(f"  {total:.0f} {unit}")
+
+        return "\n".join(lines)
+
+    elif tool_name == "undo_last_food":
+        deleted = await db.delete_last_diet_entry(user_id, day)
+        if deleted:
+            entries = await db.get_diet_entries(user_id, day)
+            return f"Last entry removed. {len(entries)} entries remaining today."
+        return "Nothing to undo — no entries logged today."
 
     elif tool_name == "escalate_to_admin":
         reason = tool_input.get("reason", "No reason given")
