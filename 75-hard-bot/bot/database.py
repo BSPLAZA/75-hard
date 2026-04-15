@@ -217,8 +217,8 @@ class Database:
 
     # ── water ──────────────────────────────────────────────────────────
 
-    async def increment_water(self, telegram_id: int, day_number: int) -> int:
-        """Add one cup, capped at 16. Returns new count."""
+    async def increment_water(self, telegram_id: int, day_number: int) -> tuple[int, bool]:
+        """Add one cup, capped at 16. Returns (new_count, just_completed)."""
         await self._conn.execute(
             """
             UPDATE daily_checkins
@@ -230,22 +230,22 @@ class Database:
         await self._conn.commit()
         checkin = await self.get_checkin(telegram_id, day_number)
         new_count = checkin["water_cups"]
-        await self._check_completion(telegram_id, day_number)
-        return new_count
+        just_completed = await self._check_completion(telegram_id, day_number)
+        return new_count, just_completed
 
-    async def set_water(self, telegram_id: int, day_number: int, cups: int) -> None:
-        """Directly set water count (for corrections)."""
+    async def set_water(self, telegram_id: int, day_number: int, cups: int) -> bool:
+        """Directly set water count (for corrections). Returns True if just completed."""
         await self._conn.execute(
             "UPDATE daily_checkins SET water_cups = ? WHERE telegram_id = ? AND day_number = ?",
             (cups, telegram_id, day_number),
         )
         await self._conn.commit()
-        await self._check_completion(telegram_id, day_number)
+        return await self._check_completion(telegram_id, day_number)
 
     # ── diet ───────────────────────────────────────────────────────────
 
-    async def toggle_diet(self, telegram_id: int, day_number: int) -> bool:
-        """Flip diet_done between 0 and 1. Returns True if now on."""
+    async def toggle_diet(self, telegram_id: int, day_number: int) -> tuple[bool, bool]:
+        """Flip diet_done between 0 and 1. Returns (now_on, just_completed)."""
         checkin = await self.get_checkin(telegram_id, day_number)
         new_val = 0 if checkin["diet_done"] else 1
         await self._conn.execute(
@@ -253,8 +253,8 @@ class Database:
             (new_val, telegram_id, day_number),
         )
         await self._conn.commit()
-        await self._check_completion(telegram_id, day_number)
-        return bool(new_val)
+        just_completed = await self._check_completion(telegram_id, day_number)
+        return bool(new_val), just_completed
 
     # ── workouts ───────────────────────────────────────────────────────
 
@@ -264,8 +264,8 @@ class Database:
         day_number: int,
         workout_type: str,
         location: str,
-    ) -> int:
-        """Log a workout. Fills slot 1 first, then slot 2. Returns slot number."""
+    ) -> tuple[int, bool]:
+        """Log a workout. Fills slot 1 first, then slot 2. Returns (slot, just_completed)."""
         checkin = await self.get_checkin(telegram_id, day_number)
         if not checkin["workout_1_done"]:
             await self._conn.execute(
@@ -288,8 +288,8 @@ class Database:
             )
             slot = 2
         await self._conn.commit()
-        await self._check_completion(telegram_id, day_number)
-        return slot
+        just_completed = await self._check_completion(telegram_id, day_number)
+        return slot, just_completed
 
     async def undo_last_workout(self, telegram_id: int, day_number: int) -> int:
         """Clear the most recent workout. Returns slot cleared (0 if nothing)."""
@@ -326,7 +326,8 @@ class Database:
         day_number: int,
         book_title: str,
         takeaway: str,
-    ) -> None:
+    ) -> bool:
+        """Log reading. Returns True if this completed all tasks for the day."""
         await self._conn.execute(
             """
             UPDATE daily_checkins
@@ -336,11 +337,12 @@ class Database:
             (book_title, takeaway, telegram_id, day_number),
         )
         await self._conn.commit()
-        await self._check_completion(telegram_id, day_number)
+        return await self._check_completion(telegram_id, day_number)
 
     # ── photo ──────────────────────────────────────────────────────────
 
-    async def log_photo(self, telegram_id: int, day_number: int, file_id: str) -> None:
+    async def log_photo(self, telegram_id: int, day_number: int, file_id: str) -> bool:
+        """Log photo. Returns True if this completed all tasks for the day."""
         await self._conn.execute(
             """
             UPDATE daily_checkins
@@ -350,15 +352,18 @@ class Database:
             (file_id, telegram_id, day_number),
         )
         await self._conn.commit()
-        await self._check_completion(telegram_id, day_number)
+        return await self._check_completion(telegram_id, day_number)
 
     # ── completion check ───────────────────────────────────────────────
 
-    async def _check_completion(self, telegram_id: int, day_number: int) -> None:
-        """Set completed_at if all 6 tasks are done for this check-in."""
+    async def _check_completion(self, telegram_id: int, day_number: int) -> bool:
+        """Set completed_at if all 6 tasks are done for this check-in.
+
+        Returns True if this call newly set completed_at (first completion).
+        """
         checkin = await self.get_checkin(telegram_id, day_number)
         if checkin is None:
-            return
+            return False
         all_done = (
             checkin["workout_1_done"]
             and checkin["workout_2_done"]
@@ -374,6 +379,8 @@ class Database:
                 (now, telegram_id, day_number),
             )
             await self._conn.commit()
+            return True
+        return False
 
     # ── books ──────────────────────────────────────────────────────────
 

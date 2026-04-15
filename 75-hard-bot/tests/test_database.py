@@ -129,9 +129,9 @@ async def test_get_all_checkins_for_day(db):
 async def test_increment_water(db):
     await db.add_user(111, "Bryan")
     await db.create_checkin(111, 1, "2026-04-15")
-    count = await db.increment_water(111, 1)
+    count, _ = await db.increment_water(111, 1)
     assert count == 1
-    count = await db.increment_water(111, 1)
+    count, _ = await db.increment_water(111, 1)
     assert count == 2
 
 
@@ -140,7 +140,7 @@ async def test_increment_water_cap_at_16(db):
     await db.add_user(111, "Bryan")
     await db.create_checkin(111, 1, "2026-04-15")
     for _ in range(20):
-        count = await db.increment_water(111, 1)
+        count, _ = await db.increment_water(111, 1)
     assert count == 16
 
 
@@ -159,7 +159,7 @@ async def test_set_water(db):
 async def test_toggle_diet(db):
     await db.add_user(111, "Bryan")
     await db.create_checkin(111, 1, "2026-04-15")
-    result = await db.toggle_diet(111, 1)
+    result, _ = await db.toggle_diet(111, 1)
     assert result is True  # was 0, now 1
     checkin = await db.get_checkin(111, 1)
     assert checkin["diet_done"] == 1
@@ -170,7 +170,7 @@ async def test_toggle_diet_off(db):
     await db.add_user(111, "Bryan")
     await db.create_checkin(111, 1, "2026-04-15")
     await db.toggle_diet(111, 1)   # 0 -> 1
-    result = await db.toggle_diet(111, 1)  # 1 -> 0
+    result, _ = await db.toggle_diet(111, 1)  # 1 -> 0
     assert result is False
     checkin = await db.get_checkin(111, 1)
     assert checkin["diet_done"] == 0
@@ -182,7 +182,7 @@ async def test_toggle_diet_off(db):
 async def test_log_first_workout(db):
     await db.add_user(111, "Bryan")
     await db.create_checkin(111, 1, "2026-04-15")
-    slot = await db.log_workout(111, 1, workout_type="run", location="outdoor")
+    slot, _ = await db.log_workout(111, 1, workout_type="run", location="outdoor")
     assert slot == 1
     checkin = await db.get_checkin(111, 1)
     assert checkin["workout_1_type"] == "run"
@@ -195,7 +195,7 @@ async def test_log_second_workout(db):
     await db.add_user(111, "Bryan")
     await db.create_checkin(111, 1, "2026-04-15")
     await db.log_workout(111, 1, workout_type="run", location="outdoor")
-    slot = await db.log_workout(111, 1, workout_type="lift", location="indoor")
+    slot, _ = await db.log_workout(111, 1, workout_type="lift", location="indoor")
     assert slot == 2
     checkin = await db.get_checkin(111, 1)
     assert checkin["workout_2_type"] == "lift"

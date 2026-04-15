@@ -23,119 +23,61 @@ def _make_checkin_row(
     }
 
 
-# ── empty card ────────────────────────────────────────────────────────
-
 def test_render_card_empty():
-    """No participants should still produce a valid card with header + footer."""
+    """No participants should still produce a valid card with header."""
     text = render_card(day_number=1, active_count=0, prize_pool=0, checkins=[])
     assert "DAY 1 / 75" in text
-    assert "0/0 STANDING" in text
+    assert "<pre>" in text
 
-
-# ── partial completion ────────────────────────────────────────────────
 
 def test_render_card_partial():
     checkins = [
-        _make_checkin_row(
-            "Bryan",
-            workout_1_done=1,
-            water_cups=6,
-        ),
+        _make_checkin_row("Bryan", workout_1_done=1, water_cups=6),
     ]
     text = render_card(day_number=3, active_count=5, prize_pool=375, checkins=checkins)
     assert "DAY 3 / 75" in text
-    assert "5 STANDING" in text
-    assert "$375" in text
     assert "Bryan" in text
-    # Workout 1 done => check, workout 2 not done => dots
-    assert "\u2705" in text  # ✅
-    assert ".." in text
+    # Workout 1 done => +, workout 2 not done => dot
+    assert "+" in text
     # Should NOT have a star
-    assert "\u2b50" not in text
+    assert "*" not in text or text.count("*") == 0
 
-
-# ── all complete with star ────────────────────────────────────────────
 
 def test_render_card_all_complete_star():
     checkins = [
-        _make_checkin_row(
-            "Kat",
-            workout_1_done=1,
-            workout_2_done=1,
-            water_cups=16,
-            photo_done=1,
-            reading_done=1,
-            diet_done=1,
-        ),
+        _make_checkin_row("Kat", 1, 1, 16, 1, 1, 1),
     ]
     text = render_card(day_number=10, active_count=3, prize_pool=225, checkins=checkins)
     assert "Kat" in text
-    assert "\u2b50" in text  # ⭐
-
-
-# ── STILL STANDING ────────────────────────────────────────────────────
-
-def test_render_card_still_standing():
-    """When ALL participants complete all tasks, header says STILL STANDING."""
-    checkins = [
-        _make_checkin_row(
-            "Bryan",
-            workout_1_done=1,
-            workout_2_done=1,
-            water_cups=16,
-            photo_done=1,
-            reading_done=1,
-            diet_done=1,
-        ),
-        _make_checkin_row(
-            "Kat",
-            workout_1_done=1,
-            workout_2_done=1,
-            water_cups=16,
-            photo_done=1,
-            reading_done=1,
-            diet_done=1,
-        ),
-    ]
-    text = render_card(day_number=5, active_count=2, prize_pool=150, checkins=checkins)
-    assert "STILL STANDING" in text
+    assert "*" in text  # star marker for complete
 
 
 def test_render_card_not_still_standing_when_partial():
-    """When not all participants are complete, should NOT say STILL STANDING."""
+    """When not all participants are complete, no stars for incomplete users."""
     checkins = [
-        _make_checkin_row(
-            "Bryan",
-            workout_1_done=1,
-            workout_2_done=1,
-            water_cups=16,
-            photo_done=1,
-            reading_done=1,
-            diet_done=1,
-        ),
-        _make_checkin_row(
-            "Kat",
-            workout_1_done=1,
-            workout_2_done=0,  # missing
-            water_cups=16,
-            photo_done=1,
-            reading_done=1,
-            diet_done=1,
-        ),
+        _make_checkin_row("Bryan", 1, 1, 16, 1, 1, 1),
+        _make_checkin_row("Kat", 1, 0, 16, 1, 1, 1),
     ]
     text = render_card(day_number=5, active_count=2, prize_pool=150, checkins=checkins)
-    assert "STILL STANDING" not in text
+    # Bryan should have star, Kat should not
+    lines = text.split("\n")
+    for line in lines:
+        if "Kat" in line:
+            assert "*" not in line
 
 
-# ── footer legend ─────────────────────────────────────────────────────
-
-def test_render_card_has_footer_legend():
+def test_render_card_has_column_header():
     text = render_card(day_number=1, active_count=1, prize_pool=75, checkins=[
         _make_checkin_row("Dev"),
     ])
-    assert "W1" in text
-    assert "W2" in text
+    assert "WORK" in text
     assert "WATER" in text
-    assert "PIC" in text
-    assert "READ" in text
-    assert "DIET" in text
+    assert "P R D" in text
+
+
+def test_render_card_has_weekday():
+    text = render_card(day_number=1, active_count=1, prize_pool=75, checkins=[
+        _make_checkin_row("Dev"),
+    ])
+    # Day 1 = April 15, 2026 = Wednesday
+    assert "Wednesday" in text

@@ -8,6 +8,7 @@ from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, fil
 
 from bot.config import CB_PHOTO, CHALLENGE_START_DATE
 from bot.handlers.daily_card import refresh_card, resolve_day_from_card
+from bot.utils.easter_eggs import check_first_completion
 from bot.templates.messages import (
     PHOTO_ASK,
     PHOTO_CHECK_DM,
@@ -95,7 +96,7 @@ async def handle_dm_photo(
     file_id = photo.file_id
 
     already_had_photo = checkin["photo_done"]
-    await db.log_photo(user_id, day_number, file_id)
+    just_completed = await db.log_photo(user_id, day_number, file_id)
 
     context.user_data.pop("awaiting_photo", None)
     context.user_data.pop("photo_day", None)
@@ -107,6 +108,10 @@ async def handle_dm_photo(
 
     # Refresh the daily card
     await refresh_card(context, day_number)
+
+    if just_completed:
+        name_for_egg = user["name"] if user else update.effective_user.first_name
+        await check_first_completion(context, name_for_egg, day_number)
 
     # Notify the group
     group_chat_id = context.bot_data.get("group_chat_id")

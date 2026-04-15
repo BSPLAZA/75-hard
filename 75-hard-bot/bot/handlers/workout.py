@@ -22,6 +22,11 @@ from bot.templates.messages import (
     WORKOUT_PICK_TYPE,
     WORKOUT_WRONG_LOCATION,
 )
+from bot.utils.easter_eggs import (
+    check_first_completion,
+    check_simultaneous_workout,
+    record_workout_time,
+)
 from bot.utils.progress import get_day_number
 
 # Emoji map for workout types and locations
@@ -226,8 +231,11 @@ async def workout_location_callback(
     user = await db.get_user(update.effective_user.id)
     name = user["name"] if user else update.effective_user.first_name
 
-    slot = await db.log_workout(update.effective_user.id, day_number, wtype, location)
+    slot, just_completed = await db.log_workout(update.effective_user.id, day_number, wtype, location)
     loc_emoji = LOC_EMOJI.get(location, "")
+
+    # Record workout time for simultaneous detection
+    record_workout_time(update.effective_user.id, day_number)
 
     await query.answer()
 
@@ -254,6 +262,11 @@ async def workout_location_callback(
             raise
 
     await refresh_card(context, day_number)
+
+    # Easter eggs
+    await check_simultaneous_workout(context, update.effective_user.id, name, day_number)
+    if just_completed:
+        await check_first_completion(context, name, day_number)
 
 
 async def workout_undo_command(

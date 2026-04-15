@@ -8,6 +8,7 @@ from telegram.ext import CallbackQueryHandler, ContextTypes
 from bot.config import CB_DIET
 from bot.handlers.daily_card import refresh_card, resolve_day_from_card
 from bot.templates.messages import DIET_OFF, DIET_ON
+from bot.utils.easter_eggs import check_first_completion
 
 
 async def diet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -29,10 +30,14 @@ async def diet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not checkin:
         await db.create_checkin(update.effective_user.id, day_number, date.today().isoformat())
 
-    now_on = await db.toggle_diet(update.effective_user.id, day_number)
+    now_on, just_completed = await db.toggle_diet(update.effective_user.id, day_number)
     popup = DIET_ON if now_on else DIET_OFF
     await query.answer(popup, show_alert=False)
     await refresh_card(context, day_number)
+
+    if just_completed:
+        name = user["name"] if user else update.effective_user.first_name
+        await check_first_completion(context, name, day_number)
 
 
 def get_diet_callback_handler() -> CallbackQueryHandler:

@@ -1,5 +1,6 @@
 """Scheduled daily jobs for the 75 Hard bot using python-telegram-bot's JobQueue."""
 
+import html
 import pytz
 from datetime import date, time
 
@@ -7,6 +8,7 @@ from telegram.ext import ContextTypes
 
 from bot.config import ADMIN_USER_ID, CHALLENGE_DAYS, CHALLENGE_START_DATE
 from bot.handlers.daily_card import post_daily_card
+from bot.utils.easter_eggs import post_milestone_if_needed
 from bot.utils.progress import get_day_number, get_missing_tasks, is_all_complete
 
 ET = pytz.timezone("US/Eastern")
@@ -45,6 +47,9 @@ async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await post_daily_card(context)
 
+    # Post milestone message if applicable (separate message after the card)
+    await post_milestone_if_needed(context, day)
+
 
 async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """10 PM ET -- Post wrap-up summary."""
@@ -66,45 +71,64 @@ async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     incomplete = [c for c in checkins if not is_all_complete(c)]
     remaining = CHALLENGE_DAYS - day
 
-    # Header
-    lines = [f"Day {day} Recap\n"]
+    parts = [f"<b>Day {day} Recap</b>"]
 
-    # Per-person status
-    for c in sorted(checkins, key=lambda x: x["name"].lower()):
-        name = c["name"]
-        tasks_done = sum([
-            bool(c["workout_1_done"]),
-            bool(c["workout_2_done"]),
-            c["water_cups"] >= 16,
-            bool(c["diet_done"]),
-            bool(c["reading_done"]),
-            bool(c["photo_done"]),
-        ])
+    # Completed section
+    if complete:
+        completed_lines = ["", "<b>Completed</b>"]
+        for c in sorted(complete, key=lambda x: x["name"].lower()):
+            safe_name = html.escape(c["name"])
+            completed_lines.append(f"\u2705 {safe_name} \u2014 6/6")
+        parts.extend(completed_lines)
 
-        if is_all_complete(c):
-            lines.append(f"  {name}  —  6/6  done")
-        else:
+    # In Progress section
+    if incomplete:
+        progress_lines = ["", "<b>In Progress</b>"]
+        for c in sorted(incomplete, key=lambda x: x["name"].lower()):
+            safe_name = html.escape(c["name"])
+            tasks_done = sum([
+                bool(c["workout_1_done"]),
+                bool(c["workout_2_done"]),
+                c["water_cups"] >= 16,
+                bool(c["diet_done"]),
+                bool(c["reading_done"]),
+                bool(c["photo_done"]),
+            ])
             missing = get_missing_tasks(c)
-            lines.append(f"  {name}  —  {tasks_done}/6  needs: {', '.join(missing).lower()}")
+            missing_str = ", ".join(m.lower() for m in missing)
+            progress_lines.append(
+                f"\u23f3 {safe_name} \u2014 {tasks_done}/6 (needs: {html.escape(missing_str)})"
+            )
+        parts.extend(progress_lines)
 
-    # Reading section
+    # Reading section -- expandable blockquote
     reads = [
         (c["name"], c.get("book_title"), c.get("reading_takeaway"))
         for c in checkins
         if c["reading_done"] and c.get("book_title")
     ]
     if reads:
-        lines.append("\n📖  What we read today\n")
+        reading_lines = ["\n<blockquote expandable>\U0001f4d6 Today's Reading\n"]
         for name, book, takeaway in reads:
-            lines.append(f"  {name} — {book}")
+            safe_name = html.escape(name)
+            safe_book = html.escape(book or "")
+            reading_lines.append(f'{safe_name} \u2014 "{safe_book}"')
             if takeaway:
-                lines.append(f"  \"{takeaway}\"\n")
+                safe_takeaway = html.escape(takeaway)
+                reading_lines.append(f'"{safe_takeaway}"')
+            reading_lines.append("")
+        parts.append("\n".join(reading_lines).rstrip() + "</blockquote>")
 
     # Footer
-    lines.append(f"\n{len(complete)}/{len(checkins)} completed all tasks.")
-    lines.append(f"{remaining} days to go.")
+    parts.append(
+        f"\n{len(complete)}/{len(checkins)} completed \u00b7 {remaining} days to go"
+    )
 
-    await context.bot.send_message(chat_id=chat_id, text="\n".join(lines))
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="\n".join(parts),
+        parse_mode="HTML",
+    )
 
 
 async def nudge_job(context: ContextTypes.DEFAULT_TYPE) -> None:

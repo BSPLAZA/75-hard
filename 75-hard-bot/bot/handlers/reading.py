@@ -8,6 +8,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from bot.config import CB_READ, CB_READ_NEW, CB_READ_SAME, CHALLENGE_START_DATE
 from bot.handlers.daily_card import refresh_card, resolve_day_from_card
+from bot.utils.easter_eggs import check_first_completion
 from bot.templates.messages import (
     READ_ALREADY_DONE,
     READ_ASK_BOOK,
@@ -168,7 +169,7 @@ async def handle_dm_text(
             title = (user["current_book"] if user else None) or "Unknown"
             context.user_data.pop("pending_book_title", None)
 
-        await db.log_reading(user_id, day_number, title, takeaway)
+        just_completed = await db.log_reading(user_id, day_number, title, takeaway)
 
         name = user["name"] if user else update.effective_user.first_name
         await update.message.reply_text(
@@ -177,6 +178,9 @@ async def handle_dm_text(
 
         # Refresh the daily card
         await refresh_card(context, day_number)
+
+        if just_completed:
+            await check_first_completion(context, name, day_number)
 
         return True
 

@@ -8,6 +8,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 from bot.config import CB_WATER, CHALLENGE_START_DATE, WATER_GOAL
 from bot.handlers.daily_card import refresh_card, resolve_day_from_card
 from bot.templates.messages import WATER_FULL, WATER_POPUP, WATER_SET
+from bot.utils.easter_eggs import check_first_completion
 from bot.utils.progress import get_day_number
 
 
@@ -36,9 +37,14 @@ async def water_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.answer(WATER_FULL, show_alert=False)
         return
 
-    new_cups = await db.increment_water(update.effective_user.id, day_number)
+    new_cups, just_completed = await db.increment_water(update.effective_user.id, day_number)
     await query.answer(WATER_POPUP.format(cups=new_cups), show_alert=False)
     await refresh_card(context, day_number)
+
+    if just_completed:
+        user_obj = await db.get_user(update.effective_user.id)
+        name = user_obj["name"] if user_obj else update.effective_user.first_name
+        await check_first_completion(context, name, day_number)
 
 
 async def water_set_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -69,9 +75,13 @@ async def water_set_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not checkin:
         await db.create_checkin(update.effective_user.id, day_number, today.isoformat())
 
-    await db.set_water(update.effective_user.id, day_number, cups)
+    just_completed = await db.set_water(update.effective_user.id, day_number, cups)
     await update.message.reply_text(WATER_SET.format(cups=cups))
     await refresh_card(context, day_number)
+
+    if just_completed:
+        name = user["name"] if user else update.effective_user.first_name
+        await check_first_completion(context, name, day_number)
 
 
 def get_water_callback_handler() -> CallbackQueryHandler:
