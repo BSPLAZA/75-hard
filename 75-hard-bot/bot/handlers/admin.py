@@ -64,10 +64,24 @@ async def admin_set_group_command(
 
     chat_id = update.effective_chat.id
     context.bot_data["group_chat_id"] = chat_id
-    await update.message.reply_text(
-        f"Group set! Chat ID: {chat_id}\n\n"
-        f"Luke is now active in this group. Use /admin_reset_day to post today's card."
-    )
+
+    # Generate invite link
+    try:
+        invite = await context.bot.create_chat_invite_link(
+            chat_id=chat_id,
+            name="75 Hard — Locked In",
+        )
+        context.bot_data["group_invite_link"] = invite.invite_link
+        await update.message.reply_text(
+            f"Group set! Invite link ready.\n"
+            f"Use /admin_reset_day to post today's card.\n"
+            f"Use /admin_confirm_payment <name> after someone pays."
+        )
+    except Exception:
+        await update.message.reply_text(
+            f"Group set! But I couldn't create an invite link.\n"
+            f"Make sure I have 'Invite Users' admin permission."
+        )
 
 
 async def admin_reset_day_command(
@@ -295,6 +309,60 @@ async def admin_test_nudge_command(
     await update.message.reply_text("Nudge triggered.")
 
 
+async def admin_confirm_payment_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Confirm a user's payment and send them the group invite link."""
+    if not _is_admin(update.effective_user.id):
+        await update.message.reply_text("Admin only.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage: /admin_confirm_payment <name>")
+        return
+
+    name = " ".join(context.args)
+    db = context.bot_data["db"]
+    user = await db.get_user_by_name(name)
+
+    if not user:
+        await update.message.reply_text(f"No user named '{name}' found.")
+        return
+
+    if not user["dm_registered"]:
+        await update.message.reply_text(f"{name} hasn't registered with the bot yet.")
+        return
+
+    # Mark as paid
+    await db._conn.execute(
+        "UPDATE users SET paid = 1 WHERE telegram_id = ?", (user["telegram_id"],)
+    )
+    await db._conn.commit()
+
+    # Send invite link
+    invite_link = context.bot_data.get("group_invite_link")
+    if invite_link:
+        try:
+            await context.bot.send_message(
+                chat_id=user["telegram_id"],
+                text=(
+                    "✅ Payment confirmed!\n"
+                    "\n"
+                    f"👉 Join the group: {invite_link}\n"
+                    "\n"
+                    "See you in there 🔥"
+                ),
+            )
+            await update.message.reply_text(f"Payment confirmed for {name}. Invite link sent.")
+        except Exception as e:
+            await update.message.reply_text(f"Payment confirmed for {name} but couldn't DM them: {e}")
+    else:
+        await update.message.reply_text(
+            f"Payment confirmed for {name}, but no group invite link yet. "
+            "Add me to a group first and I'll generate one."
+        )
+
+
 async def admin_reset_db_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -329,6 +397,7 @@ def get_admin_handlers() -> list:
         CommandHandler("admin_resolve", admin_resolve_command),
         CommandHandler("admin_announce", admin_announce_command),
         CommandHandler("admin_reset_db", admin_reset_db_command),
+        CommandHandler("admin_confirm_payment", admin_confirm_payment_command),
     ]
 
 

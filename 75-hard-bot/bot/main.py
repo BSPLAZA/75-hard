@@ -104,6 +104,17 @@ async def handle_new_group(update: Update, context) -> None:
             except Exception:
                 pass
 
+            # Generate invite link for auto-sharing after payment
+            try:
+                invite = await context.bot.create_chat_invite_link(
+                    chat_id=chat_id,
+                    name="75 Hard — Locked In",
+                )
+                context.bot_data["group_invite_link"] = invite.invite_link
+                logger.info("Invite link generated: %s", invite.invite_link)
+            except Exception as e:
+                logger.warning("Could not create invite link: %s", e)
+
 
 def main() -> None:
     """Build the application, register handlers, and start polling."""

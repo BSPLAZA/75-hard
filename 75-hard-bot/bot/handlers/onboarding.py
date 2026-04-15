@@ -33,7 +33,7 @@ CB_BOOK_LATER = "onboard_book_later"
 ALREADY_PAID = ["Yumna"]
 ORGANIZER = "Bryan"
 
-VENMO_USERNAME = "BrianEdit"
+VENMO_USERNAME = "bryanedit"
 BUY_IN = 75
 
 
@@ -260,6 +260,16 @@ async def book_later_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 
+async def _send_invite_link(user_id, context):
+    """Send the group invite link to a user if available."""
+    invite_link = context.bot_data.get("group_invite_link")
+    if invite_link:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"👉 Join the group: {invite_link}"
+        )
+
+
 async def _show_final_confirmation(user_id, matched, context, book=None, edit_message=None):
     """Show the final confirmation with payment info if needed."""
     db = context.bot_data["db"]
@@ -276,11 +286,15 @@ async def _show_final_confirmation(user_id, matched, context, book=None, edit_me
             f"{book_line}\n"
             "\n"
             "You're registered and running this thing.\n"
-            "Once everyone else registers and pays, create\n"
-            "the group and add me. I'll handle the rest.\n"
             "\n"
             "🔥 Let's make this legendary."
         )
+        if edit_message:
+            await edit_message.edit_message_text(text)
+        else:
+            await context.bot.send_message(chat_id=user_id, text=text)
+        await _send_invite_link(user_id, context)
+
     elif matched in ALREADY_PAID:
         text = (
             "✅ YOU'RE IN\n"
@@ -290,11 +304,14 @@ async def _show_final_confirmation(user_id, matched, context, book=None, edit_me
             "\n"
             f"Hey {matched} — your payment is already confirmed. 💰\n"
             "\n"
-            "Bryan will add you to the group shortly where\n"
-            "you'll align on final details before Day 1.\n"
-            "\n"
             "🔥 See you on the other side."
         )
+        if edit_message:
+            await edit_message.edit_message_text(text)
+        else:
+            await context.bot.send_message(chat_id=user_id, text=text)
+        await _send_invite_link(user_id, context)
+
     else:
         venmo_note = "75 Hard - Locked In"
         venmo_deeplink = (
@@ -313,17 +330,15 @@ async def _show_final_confirmation(user_id, matched, context, book=None, edit_me
             "\n"
             f"Note: \"{venmo_note}\"\n"
             "\n"
-            "Once Bryan confirms your payment, you'll be\n"
-            "added to the group where we'll align on final\n"
-            "details like workout duration and kick this off.\n"
+            "Once Bryan confirms your payment, I'll send\n"
+            "you the group invite link automatically.\n"
             "\n"
             "🔥 See you on the other side."
         )
-
-    if edit_message:
-        await edit_message.edit_message_text(text)
-    else:
-        await context.bot.send_message(chat_id=user_id, text=text)
+        if edit_message:
+            await edit_message.edit_message_text(text)
+        else:
+            await context.bot.send_message(chat_id=user_id, text=text)
 
     await _update_welcome_message(context)
 
