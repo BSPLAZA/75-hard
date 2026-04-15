@@ -164,3 +164,153 @@ def render_recap_image(
     img.save(buf, format="PNG", optimize=True)
     buf.seek(0)
     return buf
+
+
+def render_weekly_digest_image(
+    week_number: int,
+    user_stats: list[dict],
+    total_workouts: int,
+    total_water: int,
+    total_reading_days: int,
+    first_finisher_name: str | None,
+    first_finisher_count: int,
+) -> BytesIO:
+    """Generate a weekly digest scoreboard image. Returns a BytesIO PNG buffer.
+
+    user_stats is a list of dicts with keys:
+        name, days_complete, total_days, consistency (list of bool for each day)
+    """
+    scale = 2
+    padding = 40 * scale
+    row_height = 64 * scale
+    header_height = 110 * scale
+    stats_height = 140 * scale
+    user_section_header = 40 * scale
+    footer_height = 60 * scale
+    dot_size = 18 * scale
+    dot_gap = 8 * scale
+
+    num_users = len(user_stats)
+    width = 700 * scale
+    height = (
+        header_height
+        + stats_height
+        + user_section_header
+        + (num_users * row_height)
+        + footer_height
+        + padding
+    )
+
+    img = Image.new("RGB", (width, height), BG)
+    draw = ImageDraw.Draw(img)
+
+    font_title = _load_font(26 * scale, bold=True)
+    font_subtitle = _load_font(16 * scale)
+    font_stat_value = _load_font(28 * scale, bold=True)
+    font_stat_label = _load_font(12 * scale)
+    font_name = _load_font(18 * scale)
+    font_score = _load_font(16 * scale, bold=True)
+    font_section = _load_font(14 * scale, bold=True)
+    font_footer = _load_font(14 * scale)
+
+    # ── Header ────────────────────────────────────────────────────────
+    y = padding
+    draw.text((padding, y), f"WEEK {week_number} DIGEST", fill=TEXT_PRIMARY, font=font_title)
+    y += 38 * scale
+    draw.text((padding, y), "Sunday Recap", fill=TEXT_DIM, font=font_subtitle)
+    y += 30 * scale
+    draw.line([(padding, y), (width - padding, y)], fill=BORDER, width=2)
+
+    # ── Aggregate stats (2x2 grid) ────────────────────────────────────
+    y += 20 * scale
+    col_w = (width - 2 * padding) // 2
+    stats = [
+        (str(total_workouts), "WORKOUTS"),
+        (f"{total_water}", "CUPS OF WATER"),
+        (f"{total_reading_days * 10}+", "PAGES READ"),
+        (
+            f"{first_finisher_name} ({first_finisher_count}x)" if first_finisher_name else "---",
+            "FIRST TO FINISH",
+        ),
+    ]
+    for i, (value, label) in enumerate(stats):
+        col = i % 2
+        row = i // 2
+        sx = padding + col * col_w
+        sy = y + row * 60 * scale
+
+        draw.text((sx, sy), value, fill=GREEN, font=font_stat_value)
+        draw.text((sx, sy + 34 * scale), label, fill=TEXT_DIM, font=font_stat_label)
+
+    y += 120 * scale
+    draw.line([(padding, y), (width - padding, y)], fill=BORDER, width=2)
+
+    # ── Per-user consistency ──────────────────────────────────────────
+    y += 16 * scale
+    draw.text((padding, y), "CONSISTENCY", fill=TEXT_DIM, font=font_section)
+
+    # Day labels (M T W T F S S or Day numbers)
+    day_labels = ["M", "T", "W", "T", "F", "S", "S"]
+    dots_start_x = 300 * scale
+    for i, label in enumerate(day_labels):
+        lx = dots_start_x + i * (dot_size + dot_gap)
+        draw.text((lx, y), label, fill=TEXT_DIM, font=_load_font(10 * scale))
+
+    y += user_section_header
+
+    # Sort by completion rate descending
+    sorted_users = sorted(user_stats, key=lambda u: u["days_complete"], reverse=True)
+
+    for idx, u in enumerate(sorted_users):
+        uy = y + idx * row_height
+        name = u["name"]
+        days_done = u["days_complete"]
+        total_days = u["total_days"]
+
+        # Name
+        name_color = GREEN if days_done == total_days else TEXT_PRIMARY
+        draw.text((padding, uy + 8 * scale), name, fill=name_color, font=font_name)
+
+        # Score
+        score_text = f"{days_done}/{total_days}"
+        draw.text((200 * scale, uy + 8 * scale), score_text, fill=TEXT_DIM, font=font_score)
+
+        # Consistency dots
+        consistency = u.get("consistency", [])
+        for i, completed in enumerate(consistency):
+            cx = dots_start_x + i * (dot_size + dot_gap) + dot_size // 2
+            cy = uy + 16 * scale
+            if completed:
+                draw.ellipse(
+                    [cx - dot_size // 2, cy - dot_size // 2, cx + dot_size // 2, cy + dot_size // 2],
+                    fill=GREEN,
+                )
+            else:
+                draw.ellipse(
+                    [cx - dot_size // 2, cy - dot_size // 2, cx + dot_size // 2, cy + dot_size // 2],
+                    outline=RED_DIM,
+                    width=2,
+                )
+
+        # Perfect week star
+        if days_done == total_days and total_days > 0:
+            draw.text(
+                (width - padding - 30 * scale, uy + 4 * scale),
+                "★",
+                fill=ORANGE,
+                font=_load_font(22 * scale),
+            )
+
+    # ── Footer ────────────────────────────────────────────────────────
+    footer_y = y + num_users * row_height + 8
+    draw.line([(padding, footer_y), (width - padding, footer_y)], fill=BORDER, width=2)
+
+    perfect_count = sum(1 for u in user_stats if u["days_complete"] == u["total_days"] and u["total_days"] > 0)
+    footer_text = f"{perfect_count}/{num_users} had a perfect week"
+    draw.text((padding, footer_y + 14 * scale), footer_text, fill=TEXT_DIM, font=font_footer)
+
+    # Output
+    buf = BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    buf.seek(0)
+    return buf

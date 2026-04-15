@@ -13,7 +13,7 @@ from telegram.ext import (
 
 from bot.config import ADMIN_USER_ID, CHALLENGE_START_DATE
 from bot.handlers.daily_card import post_daily_card, refresh_card
-from bot.jobs.scheduler import evening_scoreboard_job, nudge_job
+from bot.jobs.scheduler import evening_scoreboard_job, nudge_job, weekly_digest_job
 from bot.templates.messages import FAIL_CONFIRM, FAIL_DONE
 from bot.utils.progress import get_day_number
 
@@ -512,6 +512,82 @@ async def admin_test_nudge_command(
     await update.message.reply_text("Nudge triggered.")
 
 
+async def admin_test_digest_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Preview the weekly Sunday digest."""
+    if not _is_admin(update.effective_user.id):
+        await update.message.reply_text("Admin only.")
+        return
+    try:
+        from bot.jobs.scheduler import _gather_weekly_data
+        from bot.utils.image_generator import render_weekly_digest_image
+        from bot.utils.luke_ai import generate_weekly_reflection
+        from bot.config import CHALLENGE_START_DATE
+        from bot.utils.progress import get_day_number
+
+        db = context.bot_data["db"]
+        chat_id = update.effective_chat.id
+        current_day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+
+        data = await _gather_weekly_data(db, current_day)
+
+        if not data["user_stats"]:
+            await update.message.reply_text("No checkin data found for the past 7 days.")
+            return
+
+        # Generate digest image
+        image_buf = render_weekly_digest_image(
+            week_number=data["week_number"],
+            user_stats=data["user_stats"],
+            total_workouts=data["total_workouts"],
+            total_water=data["total_water"],
+            total_reading_days=data["total_reading_days"],
+            first_finisher_name=data["first_finisher_name"],
+            first_finisher_count=data["first_finisher_count"],
+        )
+
+        # Build reading log
+        reading_parts = []
+        if data["reading_log"]:
+            reading_parts.append("📖 This week's reading\n")
+            for entry in data["reading_log"]:
+                books_str = ", ".join(
+                    f'"{b["title"]}" ({b["days"]} day{"s" if b["days"] != 1 else ""})'
+                    for b in entry["books"]
+                )
+                reading_parts.append(f'{entry["name"]} — {books_str}')
+
+        reading_text = "\n".join(reading_parts) if reading_parts else ""
+
+        # Generate AI reflection
+        reflection = await generate_weekly_reflection(
+            week_number=data["week_number"],
+            user_stats=data["user_stats"],
+            reading_log=data["reading_log"],
+        )
+
+        # Build caption
+        caption_parts = []
+        if reading_text:
+            caption_parts.append(reading_text)
+        if reflection:
+            caption_parts.append(f"\n{reflection}")
+
+        caption = "\n".join(caption_parts) if caption_parts else f"Week {data['week_number']} digest"
+
+        # Send to current chat
+        if len(caption) > 1024:
+            await context.bot.send_photo(chat_id=chat_id, photo=image_buf)
+            await context.bot.send_message(chat_id=chat_id, text=caption)
+        else:
+            await context.bot.send_photo(chat_id=chat_id, photo=image_buf, caption=caption)
+
+    except Exception as e:
+        import traceback
+        await update.message.reply_text(f"Digest failed:\n{traceback.format_exc()[-500:]}")
+
+
 async def admin_confirm_payment_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -597,6 +673,7 @@ def get_admin_handlers() -> list:
         CommandHandler("admin_test_recap", admin_test_recap_command),
         CommandHandler("admin_test_morning", admin_test_morning_command),
         CommandHandler("admin_test_nudge", admin_test_nudge_command),
+        CommandHandler("admin_test_digest", admin_test_digest_command),
         CommandHandler("admin_feedback", admin_feedback_command),
         CommandHandler("admin_resolve", admin_resolve_command),
         CommandHandler("admin_announce", admin_announce_command),

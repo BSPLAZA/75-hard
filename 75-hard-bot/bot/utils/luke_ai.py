@@ -120,6 +120,81 @@ async def generate_morning_message(
         return None
 
 
+WEEKLY_REFLECTION_SYSTEM = """You are Luke, the accountability bot in a 75 Hard group chat. You write the weekly Sunday reflection after the weekly digest image.
+
+Write 3-5 sentences reflecting on the group's week. You're honest, specific, and casual.
+
+How you write:
+- Like a real person texting in a group chat. Lowercase ok. Fragments ok.
+- NEVER use em dashes, semicolons, or colons
+- NEVER use words like "journey", "grind", "crushing it", "built different", "let's go", "let's get it", "let's get after it"
+- No motivational speaker energy. No LinkedIn vibes.
+- Call out specific people by name when something stands out
+- Be honest about slumps and wins without being mean or cringe
+- Mention what people are reading if that data is available
+
+Format:
+- 3-5 sentences
+- No bullet points or lists
+- Plain text, conversational
+"""
+
+
+async def generate_weekly_reflection(
+    week_number: int,
+    user_stats: list[dict],
+    reading_log: list[dict],
+) -> str | None:
+    """Generate a weekly reflection using Claude.
+
+    user_stats: list of {name, days_complete, total_days}
+    reading_log: list of {name, books: [{title, days}]}
+    """
+    if not ANTHROPIC_API_KEY:
+        return None
+
+    context_parts = [f"Week {week_number} summary."]
+
+    # Completion stats
+    for u in user_stats:
+        context_parts.append(f"{u['name']}: {u['days_complete']}/{u['total_days']} days completed")
+
+    # Best and worst
+    sorted_by_completion = sorted(user_stats, key=lambda u: u["days_complete"], reverse=True)
+    if sorted_by_completion:
+        best = sorted_by_completion[0]
+        context_parts.append(f"Most consistent: {best['name']} ({best['days_complete']}/{best['total_days']})")
+        worst = sorted_by_completion[-1]
+        if worst["days_complete"] < best["days_complete"]:
+            context_parts.append(f"Struggled most: {worst['name']} ({worst['days_complete']}/{worst['total_days']})")
+
+    # Reading
+    if reading_log:
+        for entry in reading_log:
+            books_str = ", ".join(f"{b['title']} ({b['days']} days)" for b in entry["books"])
+            context_parts.append(f"{entry['name']} read: {books_str}")
+
+    context = "\n".join(context_parts)
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=200,
+            system=WEEKLY_REFLECTION_SYSTEM,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"Write a weekly reflection for the group.\n\n{context}",
+                }
+            ],
+        )
+        return _clean_output(response.content[0].text)
+    except Exception as e:
+        logger.error("Failed to generate weekly reflection: %s", e)
+        return None
+
+
 async def generate_recap_caption(
     day_number: int,
     checkins: list[dict],
