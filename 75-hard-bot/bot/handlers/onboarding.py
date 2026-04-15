@@ -13,6 +13,7 @@ from telegram.ext import (
 )
 
 from bot.config import PARTICIPANTS
+from bot.utils.books import fetch_book_cover
 from bot.templates.messages import (
     WELCOME_ALL_REGISTERED,
     WELCOME_GROUP,
@@ -238,7 +239,10 @@ async def receive_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = await db.get_user_by_name(matched)
     if user:
-        await db.set_current_book(user["telegram_id"], book, started_day=1)
+        cover_url = await fetch_book_cover(book)
+        await db.set_current_book(
+            user["telegram_id"], book, started_day=1, cover_url=cover_url
+        )
 
     context.user_data["onboard_book"] = book
     return await _handle_payment_step(update.effective_user.id, matched, context)

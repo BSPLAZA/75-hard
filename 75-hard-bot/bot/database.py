@@ -75,7 +75,8 @@ class Database:
                 telegram_id INTEGER NOT NULL,
                 title TEXT NOT NULL,
                 started_day INTEGER NOT NULL,
-                finished_day INTEGER
+                finished_day INTEGER,
+                cover_url TEXT
             );
 
             CREATE TABLE IF NOT EXISTS feedback (
@@ -105,6 +106,7 @@ class Database:
             "ALTER TABLE users ADD COLUMN diet_plan TEXT",
             "ALTER TABLE users ADD COLUMN redeemed INTEGER DEFAULT 0",
             "ALTER TABLE users ADD COLUMN redemption_fee INTEGER DEFAULT 0",
+            "ALTER TABLE books ADD COLUMN cover_url TEXT",
         ]
         for sql in migrations:
             try:
@@ -409,7 +411,12 @@ class Database:
         await self._conn.commit()
 
     async def set_current_book(
-        self, telegram_id: int, title: str, *, started_day: int
+        self,
+        telegram_id: int,
+        title: str,
+        *,
+        started_day: int,
+        cover_url: str | None = None,
     ) -> None:
         """Set the user's current book and create a books record."""
         await self._conn.execute(
@@ -417,10 +424,26 @@ class Database:
             (title, telegram_id),
         )
         await self._conn.execute(
-            "INSERT INTO books (telegram_id, title, started_day) VALUES (?, ?, ?)",
-            (telegram_id, title, started_day),
+            "INSERT INTO books (telegram_id, title, started_day, cover_url) VALUES (?, ?, ?, ?)",
+            (telegram_id, title, started_day, cover_url),
         )
         await self._conn.commit()
+
+    async def get_current_book_cover(self, telegram_id: int) -> str | None:
+        """Return the cover URL for the user's current book, or None."""
+        user = await self.get_user(telegram_id)
+        if not user or not user["current_book"]:
+            return None
+        async with self._conn.execute(
+            """
+            SELECT cover_url FROM books
+            WHERE telegram_id = ? AND title = ? AND finished_day IS NULL
+            ORDER BY id DESC LIMIT 1
+            """,
+            (telegram_id, user["current_book"]),
+        ) as cur:
+            row = await cur.fetchone()
+        return row["cover_url"] if row else None
 
     async def finish_book(self, telegram_id: int, *, finished_day: int) -> None:
         """Mark the user's current book as finished."""

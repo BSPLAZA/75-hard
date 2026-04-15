@@ -8,6 +8,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from bot.config import CB_READ, CB_READ_NEW, CB_READ_SAME, CHALLENGE_START_DATE
 from bot.handlers.daily_card import refresh_card, resolve_day_from_card
+from bot.utils.books import fetch_book_cover
 from bot.utils.easter_eggs import check_first_completion
 from bot.templates.messages import (
     READ_ALREADY_DONE,
@@ -163,8 +164,11 @@ async def handle_dm_text(
             # Finish old book if any
             if user and user["current_book"]:
                 await db.finish_book(user_id, finished_day=day_number)
-            # Start new book
-            await db.set_current_book(user_id, title, started_day=day_number)
+            # Start new book (fetch cover in background — never blocks)
+            cover_url = await fetch_book_cover(title)
+            await db.set_current_book(
+                user_id, title, started_day=day_number, cover_url=cover_url
+            )
         else:
             title = (user["current_book"] if user else None) or "Unknown"
             context.user_data.pop("pending_book_title", None)
@@ -252,8 +256,17 @@ async def setbook_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user["current_book"]:
         await db.finish_book(update.effective_user.id, finished_day=day)
 
-    await db.set_current_book(update.effective_user.id, title, started_day=day)
-    await update.message.reply_text(f'Book set to "{title}" 📖')
+    cover_url = await fetch_book_cover(title)
+    await db.set_current_book(
+        update.effective_user.id, title, started_day=day, cover_url=cover_url
+    )
+
+    if cover_url:
+        await update.message.reply_photo(
+            photo=cover_url, caption=f'Book set to "{title}" 📖'
+        )
+    else:
+        await update.message.reply_text(f'Book set to "{title}" 📖')
 
 
 async def setdiet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
