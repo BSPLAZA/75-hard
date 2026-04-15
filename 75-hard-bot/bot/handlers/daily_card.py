@@ -41,40 +41,52 @@ def build_card_keyboard() -> InlineKeyboardMarkup:
 async def post_daily_card(
     context: ContextTypes.DEFAULT_TYPE,
     chat_id: int | None = None,
+    force_day: int | None = None,
 ) -> None:
-    """Create check-in rows for all active users, render the card, send and pin it."""
+    """Create check-in rows for all active users, render the card, send and pin it.
+
+    Use force_day to override the day number (for testing / admin_reset_day before start).
+    """
     db = context.bot_data["db"]
     chat_id = chat_id or context.bot_data.get("group_chat_id")
     if not chat_id:
         return
 
     today = date.today()
-    day_number = get_day_number(CHALLENGE_START_DATE, today)
+    day_number = force_day or get_day_number(CHALLENGE_START_DATE, today)
     if day_number < 1:
-        return
+        day_number = 1  # Allow preview card before challenge starts
 
     # Ensure every active user has a check-in row for today
     active_users = await db.get_active_users()
     for user in active_users:
         await db.create_checkin(user["telegram_id"], day_number, today.isoformat())
 
-    # Gather check-ins and render
+    # Gather check-ins and previous day's for ordering
     checkins = await db.get_all_checkins_for_day(day_number)
     checkin_dicts = [dict(c) for c in checkins]
+
+    prev_checkins = None
+    if day_number > 1:
+        prev = await db.get_all_checkins_for_day(day_number - 1)
+        prev_checkins = [dict(c) for c in prev] if prev else None
+
     active_count = len(active_users)
-    prize_pool = active_count * 75  # $75 buy-in each
+    prize_pool = active_count * 75
 
     card_text = render_card(
         day_number=day_number,
         active_count=active_count,
         prize_pool=prize_pool,
         checkins=checkin_dicts,
+        prev_checkins=prev_checkins,
     )
 
     msg = await context.bot.send_message(
         chat_id=chat_id,
         text=card_text,
         reply_markup=build_card_keyboard(),
+        parse_mode="HTML",
     )
 
     # Save the card reference
@@ -103,6 +115,12 @@ async def refresh_card(
 
     checkins = await db.get_all_checkins_for_day(day_number)
     checkin_dicts = [dict(c) for c in checkins]
+
+    prev_checkins = None
+    if day_number > 1:
+        prev = await db.get_all_checkins_for_day(day_number - 1)
+        prev_checkins = [dict(c) for c in prev] if prev else None
+
     active_users = await db.get_active_users()
     active_count = len(active_users)
     prize_pool = active_count * 75
@@ -112,6 +130,7 @@ async def refresh_card(
         active_count=active_count,
         prize_pool=prize_pool,
         checkins=checkin_dicts,
+        prev_checkins=prev_checkins,
     )
 
     try:
@@ -120,6 +139,7 @@ async def refresh_card(
             message_id=card["message_id"],
             text=card_text,
             reply_markup=build_card_keyboard(),
+            parse_mode="HTML",
         )
     except BadRequest as exc:
         # Telegram raises this if the text hasn't actually changed
@@ -156,6 +176,15 @@ async def card_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         # No card yet -- post one
         target_chat = update.effective_chat.id
         await post_daily_card(context, chat_id=target_chat)
+
+
+async def resolve_day_from_card(db, message_id: int) -> int | None:
+    """Look up which day a card belongs to by its message_id.
+
+    Returns the day_number if found, otherwise None.
+    """
+    card = await db.get_card_by_message_id(message_id)
+    return card["day_number"] if card else None
 
 
 def get_card_command_handler() -> CommandHandler:

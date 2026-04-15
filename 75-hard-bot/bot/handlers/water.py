@@ -6,8 +6,8 @@ from telegram import Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from bot.config import CB_WATER, CHALLENGE_START_DATE, WATER_GOAL
-from bot.handlers.daily_card import refresh_card
-from bot.templates.messages import CARD_EXPIRED, WATER_FULL, WATER_POPUP, WATER_SET
+from bot.handlers.daily_card import refresh_card, resolve_day_from_card
+from bot.templates.messages import WATER_FULL, WATER_POPUP, WATER_SET
 from bot.utils.progress import get_day_number
 
 
@@ -16,16 +16,12 @@ async def water_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     query = update.callback_query
     db = context.bot_data["db"]
 
-    today = date.today()
-    day_number = get_day_number(CHALLENGE_START_DATE, today)
-
-    # Check the card belongs to today
-    card = await db.get_card_by_message_id(query.message.message_id)
-    if not card or card["day_number"] != day_number:
-        await query.answer(CARD_EXPIRED, show_alert=True)
+    # Resolve day from the card that was tapped
+    day_number = await resolve_day_from_card(db, query.message.message_id)
+    if not day_number:
+        await query.answer("Card not found. Use /admin_reset_day.", show_alert=True)
         return
 
-    # Ensure user has a check-in row
     user = await db.get_user(update.effective_user.id)
     if not user:
         await query.answer("Register first! DM me /start", show_alert=True)
@@ -33,7 +29,7 @@ async def water_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     checkin = await db.get_checkin(update.effective_user.id, day_number)
     if not checkin:
-        await db.create_checkin(update.effective_user.id, day_number, today.isoformat())
+        await db.create_checkin(update.effective_user.id, day_number, date.today().isoformat())
         checkin = await db.get_checkin(update.effective_user.id, day_number)
 
     if checkin["water_cups"] >= WATER_GOAL:
@@ -49,13 +45,8 @@ async def water_set_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     """Handle /water set N to manually correct cup count."""
     db = context.bot_data["db"]
     today = date.today()
-    day_number = get_day_number(CHALLENGE_START_DATE, today)
+    day_number = max(get_day_number(CHALLENGE_START_DATE, today), 1)
 
-    if day_number < 1:
-        await update.message.reply_text("The challenge hasn't started yet!")
-        return
-
-    # Parse the command: /water set 5
     args = context.args or []
     if len(args) < 2 or args[0].lower() != "set":
         await update.message.reply_text("Usage: /water set <number>")
@@ -84,10 +75,8 @@ async def water_set_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 def get_water_callback_handler() -> CallbackQueryHandler:
-    """Return the inline button handler for water taps."""
     return CallbackQueryHandler(water_callback, pattern=f"^{CB_WATER}$")
 
 
 def get_water_command_handler() -> CommandHandler:
-    """Return the /water command handler."""
     return CommandHandler("water", water_set_command)

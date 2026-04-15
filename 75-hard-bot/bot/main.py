@@ -22,7 +22,7 @@ from bot.handlers.onboarding import get_onboarding_handler
 from bot.handlers.photo import get_dm_photo_handler, get_photo_handlers
 from bot.handlers.reading import get_reading_handlers, handle_dm_text
 from bot.handlers.water import get_water_callback_handler, get_water_command_handler
-from bot.handlers.workout import get_workout_handlers
+from bot.handlers.workout import get_workout_handlers, handle_custom_workout_name
 from bot.jobs.scheduler import schedule_jobs
 from bot.templates.messages import PINNED_FAQ, WELCOME_GROUP
 
@@ -139,12 +139,21 @@ def main() -> None:
     for h in get_admin_handlers():
         app.add_handler(h)
 
-    # DM handlers (after conversation handlers)
+    # Text handlers — custom workout name (group) and reading flow (DM)
+    async def combined_text_handler(update: Update, context):
+        """Route text messages to the right handler."""
+        # Check for custom workout name first (works in groups)
+        if await handle_custom_workout_name(update, context):
+            return
+        # Then check for reading DM flow
+        if update.effective_chat.type == "private":
+            await handle_dm_text(update, context)
+
     app.add_handler(get_dm_photo_handler())
     app.add_handler(
         MessageHandler(
-            filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND,
-            handle_dm_text,
+            filters.TEXT & ~filters.COMMAND,
+            combined_text_handler,
         )
     )
 

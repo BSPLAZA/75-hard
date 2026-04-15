@@ -53,6 +53,22 @@ async def admin_status_command(
     await update.message.reply_text("\n".join(lines))
 
 
+async def admin_set_group_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Run this in a group to set it as the active group for the bot."""
+    if not _is_admin(update.effective_user.id):
+        await update.message.reply_text("Admin only.")
+        return
+
+    chat_id = update.effective_chat.id
+    context.bot_data["group_chat_id"] = chat_id
+    await update.message.reply_text(
+        f"Group set! Chat ID: {chat_id}\n\n"
+        f"Luke is now active in this group. Use /admin_reset_day to post today's card."
+    )
+
+
 async def admin_reset_day_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -62,6 +78,12 @@ async def admin_reset_day_command(
         return
 
     group_chat_id = context.bot_data.get("group_chat_id")
+    if not group_chat_id:
+        await update.message.reply_text(
+            "No group configured! Add me to a group and type /admin_set_group there first."
+        )
+        return
+
     await post_daily_card(context, chat_id=group_chat_id)
     await update.message.reply_text("Daily card reposted.")
 
@@ -253,6 +275,7 @@ async def fail_cancel(
 def get_admin_handlers() -> list:
     """Return all admin command handlers."""
     return [
+        CommandHandler("admin_set_group", admin_set_group_command),
         CommandHandler("admin_status", admin_status_command),
         CommandHandler("admin_reset_day", admin_reset_day_command),
         CommandHandler("admin_feedback", admin_feedback_command),

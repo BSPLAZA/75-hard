@@ -51,18 +51,20 @@ async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         lines.append(f"Almost there: {', '.join(parts)}")
 
     reads = [
-        (c["name"], c["book_title"])
+        (c["name"], c.get("book_title"), c.get("reading_takeaway"))
         for c in checkins
         if c["reading_done"] and c.get("book_title")
     ]
     if reads:
-        lines.extend(["", "Today's reads:"])
-        for name, book in reads:
-            lines.append(f'  {name} -- "{book}"')
+        lines.extend(["", "📖 Today's reads:"])
+        for name, book, takeaway in reads:
+            lines.append(f'  {name} — "{book}"')
+            if takeaway:
+                lines.append(f'  💬 "{takeaway}"')
+                lines.append("")
 
-    all_users = await db.get_all_users()
-    pool = sum(u["tier"] for u in all_users)
-    lines.append(f"\n${pool} -- Day {day} in the books. {CHALLENGE_DAYS - day} to go.")
+    remaining = CHALLENGE_DAYS - day
+    lines.append(f"Day {day} in the books. {remaining} to go.")
 
     await context.bot.send_message(chat_id=chat_id, text="\n".join(lines))
 

@@ -7,9 +7,8 @@ from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from bot.config import CB_READ, CB_READ_NEW, CB_READ_SAME, CHALLENGE_START_DATE
-from bot.handlers.daily_card import refresh_card
+from bot.handlers.daily_card import refresh_card, resolve_day_from_card
 from bot.templates.messages import (
-    CARD_EXPIRED,
     READ_ALREADY_DONE,
     READ_ASK_BOOK,
     READ_ASK_TAKEAWAY,
@@ -26,13 +25,9 @@ async def read_start_callback(
     query = update.callback_query
     db = context.bot_data["db"]
 
-    today = date.today()
-    day_number = get_day_number(CHALLENGE_START_DATE, today)
-
-    # Check the card belongs to today
-    card = await db.get_card_by_message_id(query.message.message_id)
-    if not card or card["day_number"] != day_number:
-        await query.answer(CARD_EXPIRED, show_alert=True)
+    day_number = await resolve_day_from_card(db, query.message.message_id)
+    if not day_number:
+        await query.answer("Card not found.", show_alert=True)
         return
 
     user = await db.get_user(update.effective_user.id)
@@ -177,22 +172,11 @@ async def handle_dm_text(
 
         name = user["name"] if user else update.effective_user.first_name
         await update.message.reply_text(
-            f"Logged! \U0001f4d6 {name} read \"{title}\" — \"{takeaway}\""
+            f"Reading logged! 📖 Your takeaway from \"{title}\" will show up in tonight's recap."
         )
 
         # Refresh the daily card
         await refresh_card(context, day_number)
-
-        # Notify the group
-        group_chat_id = context.bot_data.get("group_chat_id")
-        if group_chat_id:
-            try:
-                await context.bot.send_message(
-                    chat_id=group_chat_id,
-                    text=f"\U0001f4d6 {name} finished today's reading — \"{title}\"",
-                )
-            except Exception:
-                pass
 
         return True
 

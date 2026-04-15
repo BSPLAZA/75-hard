@@ -7,9 +7,8 @@ from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from bot.config import CB_PHOTO, CHALLENGE_START_DATE
-from bot.handlers.daily_card import refresh_card
+from bot.handlers.daily_card import refresh_card, resolve_day_from_card
 from bot.templates.messages import (
-    CARD_EXPIRED,
     PHOTO_ASK,
     PHOTO_CHECK_DM,
     PHOTO_GROUP_NOTIFY,
@@ -27,13 +26,9 @@ async def photo_start_callback(
     query = update.callback_query
     db = context.bot_data["db"]
 
-    today = date.today()
-    day_number = get_day_number(CHALLENGE_START_DATE, today)
-
-    # Check the card belongs to today
-    card = await db.get_card_by_message_id(query.message.message_id)
-    if not card or card["day_number"] != day_number:
-        await query.answer(CARD_EXPIRED, show_alert=True)
+    day_number = await resolve_day_from_card(db, query.message.message_id)
+    if not day_number:
+        await query.answer("Card not found.", show_alert=True)
         return
 
     user = await db.get_user(update.effective_user.id)

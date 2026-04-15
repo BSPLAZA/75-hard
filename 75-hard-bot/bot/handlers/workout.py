@@ -13,9 +13,8 @@ from bot.config import (
     CHALLENGE_START_DATE,
     WORKOUT_TYPES,
 )
-from bot.handlers.daily_card import refresh_card
+from bot.handlers.daily_card import refresh_card, resolve_day_from_card
 from bot.templates.messages import (
-    CARD_EXPIRED,
     WORKOUT_ALREADY_DONE,
     WORKOUT_BOTH_DONE,
     WORKOUT_LOGGED,
@@ -86,13 +85,9 @@ async def workout_start_callback(
     query = update.callback_query
     db = context.bot_data["db"]
 
-    today = date.today()
-    day_number = get_day_number(CHALLENGE_START_DATE, today)
-
-    # Check the card belongs to today
-    card = await db.get_card_by_message_id(query.message.message_id)
-    if not card or card["day_number"] != day_number:
-        await query.answer(CARD_EXPIRED, show_alert=True)
+    day_number = await resolve_day_from_card(db, query.message.message_id)
+    if not day_number:
+        await query.answer("Card not found.", show_alert=True)
         return
 
     user = await db.get_user(update.effective_user.id)
@@ -149,6 +144,19 @@ async def workout_type_callback(
 
     await query.answer()
 
+    # If "other", ask user to type the workout name
+    if wtype == "other":
+        context.user_data["awaiting_workout_name"] = True
+        context.user_data["workout_picker_message_id"] = query.message.message_id
+        context.user_data["workout_picker_chat_id"] = query.message.chat_id
+        try:
+            await query.edit_message_text(
+                "💪 What kind of workout? Type it below (e.g. hiking, boxing, basketball):"
+            )
+        except BadRequest:
+            pass
+        return
+
     # Store the pending type
     context.user_data["pending_workout_type"] = wtype
 
@@ -192,8 +200,7 @@ async def workout_location_callback(
         await query.answer("Unknown location.", show_alert=True)
         return
 
-    today = date.today()
-    day_number = get_day_number(CHALLENGE_START_DATE, today)
+    day_number = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
 
     checkin = await db.get_checkin(update.effective_user.id, day_number)
     if not checkin:
@@ -277,6 +284,42 @@ async def workout_undo_command(
     else:
         await update.message.reply_text(f"Workout {slot} cleared. Re-log when ready.")
         await refresh_card(context, day_number)
+
+
+async def handle_custom_workout_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Handle text input for custom workout type. Returns True if consumed."""
+    if not context.user_data.get("awaiting_workout_name"):
+        return False
+
+    context.user_data.pop("awaiting_workout_name", None)
+    custom_name = update.message.text.strip().lower()
+    context.user_data["pending_workout_type"] = custom_name
+
+    username = update.effective_user.username or update.effective_user.first_name
+
+    # Edit the picker message to show location options
+    picker_msg_id = context.user_data.pop("workout_picker_message_id", None)
+    picker_chat_id = context.user_data.pop("workout_picker_chat_id", None)
+    if picker_msg_id and picker_chat_id:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=picker_chat_id,
+                message_id=picker_msg_id,
+                text=WORKOUT_PICK_LOCATION.format(
+                    username=username, emoji="💪", wtype=custom_name.title()
+                ),
+                reply_markup=_location_keyboard(update.effective_user.id),
+            )
+        except Exception:
+            # Fallback: send a new message with the location picker
+            await update.message.reply_text(
+                WORKOUT_PICK_LOCATION.format(
+                    username=username, emoji="💪", wtype=custom_name.title()
+                ),
+                reply_markup=_location_keyboard(update.effective_user.id),
+            )
+
+    return True
 
 
 def get_workout_handlers() -> list:

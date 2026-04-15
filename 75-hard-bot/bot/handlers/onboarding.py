@@ -1,8 +1,8 @@
-"""Registration flow for DMs. Uses ConversationHandler."""
+"""Rich DM onboarding flow — the front door to 75 Hard."""
 
 from difflib import SequenceMatcher
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -14,19 +14,27 @@ from telegram.ext import (
 
 from bot.config import PARTICIPANTS
 from bot.templates.messages import (
-    DM_REGISTRATION_ALREADY,
-    DM_REGISTRATION_ASK_NAME,
-    DM_REGISTRATION_NOT_FOUND,
-    DM_REGISTRATION_SUCCESS,
     WELCOME_ALL_REGISTERED,
     WELCOME_GROUP,
 )
 
+# Conversation states
 AWAITING_NAME = 0
+AWAITING_COMMITMENT = 1
+
+# Callback data
+CB_LOCKED_IN = "onboard_locked_in"
+CB_NOT_FOR_ME = "onboard_not_for_me"
+
+# Users who don't need to pay
+ALREADY_PAID = ["Yumna"]
+ORGANIZER = "Bryan"
+
+VENMO_USERNAME = "BrianEdit"
+BUY_IN = 75
 
 
 def _fuzzy_match(name: str, candidates: list[str]) -> str | None:
-    """Return the best fuzzy match from *candidates*, or None if nothing scores >= 0.5."""
     name_lower = name.strip().lower()
     best_match, best_ratio = None, 0.0
     for c in candidates:
@@ -38,7 +46,7 @@ def _fuzzy_match(name: str, candidates: list[str]) -> str | None:
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start in DMs -- kick off registration."""
+    """Handle /start in DMs — big welcome, then ask for name."""
     if update.effective_chat.type != "private":
         return ConversationHandler.END
 
@@ -46,41 +54,184 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await db.get_user(update.effective_user.id)
     if user and user["dm_registered"]:
         await update.message.reply_text(
-            DM_REGISTRATION_ALREADY.format(name=user["name"])
+            f"You're already registered, {user['name']}! "
+            f"Sit tight — Bryan will add you to the group when everyone's in."
         )
         return ConversationHandler.END
 
-    await update.message.reply_text(DM_REGISTRATION_ASK_NAME)
+    welcome = (
+        "🔥 LOCKED IN — 75 HARD 🔥\n"
+        "\n"
+        "Welcome to the hardest thing you'll do this year.\n"
+        "\n"
+        "75 days. 5 daily tasks. No excuses. No exceptions.\n"
+        "Miss one task on any day and you're out.\n"
+        "\n"
+        "💰 $75 buy-in. Winners split the pot from those\n"
+        "who don't make it. If everyone finishes — everyone\n"
+        "gets their money back. Respect.\n"
+        "\n"
+        "Let's see if you've got what it takes.\n"
+        "\n"
+        "What's your name?"
+    )
+
+    await update.message.reply_text(welcome)
     return AWAITING_NAME
 
 
 async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Match the typed name against the participant list."""
+    """Match name, then show rules + ask for commitment."""
     db = context.bot_data["db"]
     typed_name = update.message.text.strip()
     matched = _fuzzy_match(typed_name, PARTICIPANTS)
 
     if not matched:
-        await update.message.reply_text(DM_REGISTRATION_NOT_FOUND)
-        return ConversationHandler.END
+        await update.message.reply_text(
+            "Hmm, I don't see that name on the list.\n\n"
+            "The current squad is: " + ", ".join(PARTICIPANTS) + "\n\n"
+            "If that's you, try typing just your first name. "
+            "If you're new, ask Bryan to add you."
+        )
+        return AWAITING_NAME
 
-    # Check if name already claimed by another telegram user
+    # Check if already claimed
     existing = await db.get_user_by_name(matched)
     if existing and existing["dm_registered"]:
-        await update.message.reply_text(f"{matched} is already registered.")
+        await update.message.reply_text(f"{matched} is already registered by someone else.")
         return ConversationHandler.END
 
-    # Either update an existing row or create a new one
+    # Store the matched name for the next step
+    context.user_data["onboard_name"] = matched
+
+    # Send the rules card
+    rules = (
+        f"Hey {matched} 👊\n"
+        "\n"
+        "📋 THE RULES\n"
+        "\n"
+        "Every single day for 75 days:\n"
+        "\n"
+        "🏋️  Two workouts (one indoor, one outdoor)\n"
+        "💧  Drink a gallon of water (16 cups)\n"
+        "🍽️  Follow your diet (no alcohol, no cheat meals)\n"
+        "📖  Read 10 pages of non-fiction\n"
+        "📸  Take a progress photo\n"
+        "\n"
+        "📅  April 15 → June 28, 2026\n"
+        "\n"
+        "⚡ Note: As long as you're aligned with the core\n"
+        "spirit of the rules, you're good. We'll finalize\n"
+        "the details together in the group — things like\n"
+        "workout duration (30 vs 45 min) and buy-in amount\n"
+        "are still open for discussion.\n"
+        "\n"
+        "🤖 HOW IT WORKS\n"
+        "\n"
+        "You'll track everything through me right here in\n"
+        "Telegram. Every morning I drop a daily card in the\n"
+        "group chat. Tap buttons to log your tasks — water,\n"
+        "workouts, reading, photos, diet. The card updates\n"
+        "live so everyone sees each other's progress.\n"
+        "\n"
+        "No apps to download. No spreadsheets. Just tap and go.\n"
+        "\n"
+        "💰 STAKES\n"
+        "\n"
+        "$75 buy-in. If you fail on Day X, you get $X back.\n"
+        "The rest goes to the prize pool for the survivors.\n"
+        "\n"
+        "If everyone finishes — everyone gets their $75 back.\n"
+        "That would be legendary.\n"
+    )
+
+    buttons = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔒 I'm locked in", callback_data=CB_LOCKED_IN),
+        InlineKeyboardButton("Not for me", callback_data=CB_NOT_FOR_ME),
+    ]])
+
+    await update.message.reply_text(rules, reply_markup=buttons)
+    return AWAITING_COMMITMENT
+
+
+async def commitment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User tapped 'I'm locked in' or 'Not for me'."""
+    query = update.callback_query
+    await query.answer()
+
+    matched = context.user_data.get("onboard_name")
+    if not matched:
+        await query.edit_message_text("Something went wrong. Send /start to try again.")
+        return ConversationHandler.END
+
+    if query.data == CB_NOT_FOR_ME:
+        await query.edit_message_text(
+            "No worries — respect for being honest.\n\n"
+            "If you change your mind before April 15, just send /start again."
+        )
+        context.user_data.pop("onboard_name", None)
+        return ConversationHandler.END
+
+    # They're in — register them
+    db = context.bot_data["db"]
+    existing = await db.get_user_by_name(matched)
     if existing:
-        await db.update_telegram_id(matched, update.effective_user.id)
+        await db.update_telegram_id(matched, query.from_user.id)
     else:
-        await db.add_user(update.effective_user.id, matched)
-        await db.register_dm(update.effective_user.id)
+        await db.add_user(query.from_user.id, matched)
+        await db.register_dm(query.from_user.id)
 
-    await update.message.reply_text(DM_REGISTRATION_SUCCESS.format(name=matched))
+    # Determine payment status
+    if matched == ORGANIZER:
+        # Bryan doesn't pay himself
+        await query.edit_message_text(
+            "✅ YOU'RE IN, BOSS\n"
+            "\n"
+            "You're registered and running this thing.\n"
+            "\n"
+            "Once everyone else registers and pays, create\n"
+            "the group and add me. I'll handle the rest.\n"
+            "\n"
+            "🔥 Let's make this legendary."
+        )
+    elif matched in ALREADY_PAID:
+        await query.edit_message_text(
+            "✅ YOU'RE IN\n"
+            "\n"
+            f"Hey {matched} — your payment is already confirmed. 💰\n"
+            "\n"
+            "Bryan will add you to the group shortly where\n"
+            "you'll align on final details before Day 1.\n"
+            "\n"
+            "🔥 See you on the other side."
+        )
+    else:
+        # Needs to pay — send Venmo link
+        venmo_note = "75 Hard - Locked In"
+        venmo_deeplink = (
+            f"https://venmo.com/{VENMO_USERNAME}"
+            f"?txn=pay&amount={BUY_IN}&note={venmo_note.replace(' ', '%20')}"
+        )
 
-    # Update the welcome message in the group chat
+        await query.edit_message_text(
+            "💰 BUY-IN: $75\n"
+            "\n"
+            f"Last step — send ${BUY_IN} to @{VENMO_USERNAME} on Venmo.\n"
+            "\n"
+            f"👉 Pay here: {venmo_deeplink}\n"
+            "\n"
+            f"Note: \"{venmo_note}\"\n"
+            "\n"
+            "Once Bryan confirms your payment, you'll be\n"
+            "added to the group where we'll align on final\n"
+            "details like workout duration and kick this off.\n"
+            "\n"
+            "🔥 See you on the other side."
+        )
+
+    # Update welcome message in group
     await _update_welcome_message(context)
+    context.user_data.pop("onboard_name", None)
     return ConversationHandler.END
 
 
@@ -128,10 +279,15 @@ def get_onboarding_handler() -> ConversationHandler:
         entry_points=[CommandHandler("start", start_command)],
         states={
             AWAITING_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name),
+            ],
+            AWAITING_COMMITMENT: [
+                CallbackQueryHandler(commitment_callback, pattern=f"^{CB_LOCKED_IN}$"),
+                CallbackQueryHandler(commitment_callback, pattern=f"^{CB_NOT_FOR_ME}$"),
             ],
         },
         fallbacks=[CommandHandler("start", start_command)],
         per_chat=True,
         per_user=True,
+        per_message=False,
     )
