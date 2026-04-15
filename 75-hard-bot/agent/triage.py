@@ -103,6 +103,17 @@ async def triage_feedback(item: dict) -> dict:
             messages=[{"role": "user", "content": user_message}],
         )
         raw = response.content[0].text.strip()
+        # Handle markdown-wrapped JSON
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+        # Find JSON object in response
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start >= 0 and end > start:
+            raw = raw[start:end]
         result = json.loads(raw)
 
         # Validate expected keys

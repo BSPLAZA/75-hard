@@ -406,6 +406,18 @@ async def noon_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 pass
 
 
+async def daily_backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """3 AM ET -- Backup the database."""
+    import shutil
+    from bot.config import DATABASE_PATH
+    try:
+        backup_path = DATABASE_PATH + f".backup-day{get_day_number(CHALLENGE_START_DATE, date.today())}"
+        shutil.copy2(DATABASE_PATH, backup_path)
+        logger.info("Database backed up to %s", backup_path)
+    except Exception as e:
+        logger.error("Backup failed: %s", e)
+
+
 def schedule_jobs(job_queue) -> None:
     """Register all daily scheduled jobs."""
     job_queue.run_daily(
@@ -420,4 +432,7 @@ def schedule_jobs(job_queue) -> None:
     )
     job_queue.run_daily(
         weekly_digest_job, time=time(20, 0, tzinfo=ET), name="weekly_digest"
+    )
+    job_queue.run_daily(
+        daily_backup_job, time=time(3, 0, tzinfo=ET), name="daily_backup"
     )

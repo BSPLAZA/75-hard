@@ -8,5 +8,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt tzdata
 
 COPY bot/ bot/
+COPY agent/ agent/
+COPY start.sh .
 
-CMD ["python", "-m", "bot.main"]
+CMD ["bash", "start.sh"]
