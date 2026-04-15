@@ -43,9 +43,19 @@ async def photo_start_callback(
             update.effective_user.id, day_number, today.isoformat()
         )
 
-    await query.answer(PHOTO_CHECK_DM)
+    await query.answer("check your DMs 📸", show_alert=True)
 
-    # Mark that the user should send a photo
+    # DM them directly with a prompt
+    try:
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=f"send me your Day {day_number} progress photo 📸",
+        )
+    except Exception:
+        await query.answer("DM me first — tap t.me/lockedinlukebot to start", show_alert=True)
+        return
+
+    # Mark that the user should send a photo (works in group or DM)
     context.user_data["awaiting_photo"] = True
     context.user_data["photo_day"] = day_number
 

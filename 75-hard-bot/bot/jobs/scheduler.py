@@ -105,31 +105,32 @@ async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     from bot.utils.image_generator import render_recap_image
     image_buf = render_recap_image(day, checkins, CHALLENGE_DAYS)
 
-    # Build reading caption
+    caption = f"{len(complete)}/{len(checkins)} completed · {remaining} days to go"
+
+    await context.bot.send_photo(chat_id=chat_id, photo=image_buf, caption=caption)
+
+    # Send bookshelf image if anyone read today
     reads = [
-        (c["name"], c.get("book_title"), c.get("reading_takeaway"))
-        for c in checkins
-        if c["reading_done"] and c.get("book_title")
+        c for c in checkins
+        if c.get("reading_done") and c.get("book_title")
     ]
-
-    caption_parts = []
     if reads:
-        caption_parts.append("📖  What we read today\n")
-        for name, book, takeaway in reads:
-            caption_parts.append(f"{name} — {book}")
-            if takeaway:
-                caption_parts.append(f'"{takeaway}"\n')
+        from bot.utils.bookshelf import render_bookshelf
 
-    caption_parts.append(f"{len(complete)}/{len(checkins)} completed · {remaining} days to go")
-    caption = "\n".join(caption_parts)
+        # Get cover URLs for each reader
+        readers = []
+        for c in reads:
+            cover_url = await db.get_current_book_cover(c["telegram_id"])
+            readers.append({
+                "name": c["name"],
+                "book_title": c["book_title"],
+                "takeaway": c.get("reading_takeaway", ""),
+                "cover_url": cover_url,
+            })
 
-    # Send as photo with caption (max 1024 chars for caption)
-    if len(caption) > 1024:
-        # Send image without caption, then caption as separate message
-        await context.bot.send_photo(chat_id=chat_id, photo=image_buf)
-        await context.bot.send_message(chat_id=chat_id, text=caption)
-    else:
-        await context.bot.send_photo(chat_id=chat_id, photo=image_buf, caption=caption)
+        bookshelf_buf = await render_bookshelf(readers)
+        if bookshelf_buf:
+            await context.bot.send_photo(chat_id=chat_id, photo=bookshelf_buf)
 
     await db.log_event(None, None, "ai_recap", f"day={day} complete={len(complete)}/{len(checkins)}")
 

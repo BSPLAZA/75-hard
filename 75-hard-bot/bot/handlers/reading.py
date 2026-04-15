@@ -48,13 +48,37 @@ async def read_start_callback(
         await query.answer(READ_ALREADY_DONE, show_alert=True)
         return
 
-    await query.answer(READ_CHECK_DM)
+    user_id = update.effective_user.id
+    current_book = user["current_book"]
 
-    # Store day number so the DM handler knows which day to log
+    # If they have a book set, one-tap: mark reading done immediately
+    if current_book:
+        just_completed = await db.log_reading(user_id, day_number, current_book, "")
+        await query.answer(f'reading logged — "{current_book}"', show_alert=True)
+        await refresh_card(context, day_number)
+        await db.log_event(user_id, user["name"], "reading_log", current_book)
+        if just_completed:
+            await check_first_completion(context, user["name"], day_number)
+
+        # DM them asking for an optional quote
+        try:
+            context.user_data["awaiting_takeaway"] = True
+            context.user_data["reading_day"] = day_number
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f'what was your takeaway from "{current_book}" today? (or skip — just type "skip")',
+            )
+        except Exception:
+            pass
+        return
+
+    # No book set — need to DM them to set one
+    await query.answer("DM me to set your book first — /setbook <title>", show_alert=True)
+    return
+
+    # --- Legacy DM flow below (kept for /reread and NLP) ---
     context.user_data["reading_day"] = day_number
 
-    # DM the user
-    current_book = user["current_book"]
     try:
         if current_book:
             keyboard = InlineKeyboardMarkup(
@@ -150,6 +174,14 @@ async def handle_dm_text(
     if context.user_data.get("awaiting_takeaway"):
         takeaway = update.message.text.strip()
         context.user_data.pop("awaiting_takeaway", None)
+
+        # Handle skip
+        if takeaway.lower() in ("skip", "no", "nah", "pass", "none"):
+            await update.message.reply_text("no worries 👍")
+            context.user_data.pop("reading_day", None)
+            context.user_data.pop("reading_new_book", None)
+            context.user_data.pop("pending_book_title", None)
+            return True
 
         day_number = context.user_data.pop("reading_day", None)
         if day_number is None:
@@ -290,6 +322,56 @@ async def setdiet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f'Diet set to "{plan}" 🍽️')
 
 
+async def bookshelf_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/bookshelf — show what everyone is reading with covers and quotes."""
+    db = context.bot_data["db"]
+    day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+
+    checkins_raw = await db.get_all_checkins_for_day(day)
+    checkins = [dict(c) for c in checkins_raw]
+
+    reads = [c for c in checkins if c.get("reading_done") and c.get("book_title")]
+
+    if not reads:
+        # Show current books even if nobody read today
+        users = await db.get_active_users()
+        readers = []
+        for u in users:
+            u = dict(u)
+            if u.get("current_book"):
+                cover_url = await db.get_current_book_cover(u["telegram_id"])
+                readers.append({
+                    "name": u["name"],
+                    "book_title": u["current_book"],
+                    "takeaway": "",
+                    "cover_url": cover_url,
+                })
+    else:
+        readers = []
+        for c in reads:
+            cover_url = await db.get_current_book_cover(c["telegram_id"])
+            readers.append({
+                "name": c["name"],
+                "book_title": c["book_title"],
+                "takeaway": c.get("reading_takeaway", ""),
+                "cover_url": cover_url,
+            })
+
+    if not readers:
+        await update.message.reply_text("nobody has a book set yet")
+        return
+
+    from bot.utils.bookshelf import render_bookshelf
+    buf = await render_bookshelf(readers)
+    if buf:
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=buf,
+        )
+    else:
+        await update.message.reply_text("couldn't generate the bookshelf")
+
+
 def get_reading_handlers() -> list:
     """Return all reading-related callback handlers."""
     return [
@@ -299,4 +381,5 @@ def get_reading_handlers() -> list:
         CommandHandler("reread", reread_command),
         CommandHandler("setbook", setbook_command),
         CommandHandler("setdiet", setdiet_command),
+        CommandHandler("bookshelf", bookshelf_command),
     ]

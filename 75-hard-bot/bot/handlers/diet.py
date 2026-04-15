@@ -32,8 +32,11 @@ async def diet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     now_on, just_completed = await db.toggle_diet(update.effective_user.id, day_number)
     await db.log_event(update.effective_user.id, user["name"], "diet_toggle", f"on={now_on}")
-    popup = DIET_ON if now_on else DIET_OFF
-    await query.answer(popup, show_alert=False)
+    if now_on:
+        diet_plan = dict(user).get("diet_plan", "your diet")
+        await query.answer(f"diet confirmed — {diet_plan}\nno alcohol, no cheat meals", show_alert=True)
+    else:
+        await query.answer("diet un-logged\ntap again when you're back on track", show_alert=True)
     await refresh_card(context, day_number)
 
     if just_completed:

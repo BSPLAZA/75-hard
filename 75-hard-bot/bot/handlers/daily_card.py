@@ -11,7 +11,8 @@ from bot.config import (
     CB_PHOTO,
     CB_READ,
     CB_WATER,
-    CB_WORKOUT,
+    CB_WORKOUT_OUTDOOR,
+    CB_WORKOUT_INDOOR,
     CHALLENGE_START_DATE,
 )
 from bot.templates.messages import CARD_EXPIRED
@@ -25,13 +26,12 @@ def build_card_keyboard() -> InlineKeyboardMarkup:
         [
             [
                 InlineKeyboardButton("💧 Water +1", callback_data=CB_WATER),
-                InlineKeyboardButton("🏋️ Workout", callback_data=CB_WORKOUT),
+                InlineKeyboardButton("☀️ Outdoor", callback_data=CB_WORKOUT_OUTDOOR),
+                InlineKeyboardButton("🏋️ Indoor", callback_data=CB_WORKOUT_INDOOR),
             ],
             [
                 InlineKeyboardButton("📖 Read", callback_data=CB_READ),
                 InlineKeyboardButton("📸 Photo", callback_data=CB_PHOTO),
-            ],
-            [
                 InlineKeyboardButton("🍽️ Diet", callback_data=CB_DIET),
             ],
         ]

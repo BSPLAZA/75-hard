@@ -10,6 +10,8 @@ from bot.config import (
     CB_WORKOUT,
     CB_WORKOUT_LOC,
     CB_WORKOUT_TYPE,
+    CB_WORKOUT_OUTDOOR,
+    CB_WORKOUT_INDOOR,
     CHALLENGE_START_DATE,
     WORKOUT_TYPES,
 )
@@ -81,6 +83,62 @@ def _location_keyboard(user_id: int) -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+async def workout_quick_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle the direct Outdoor/Indoor button tap on the daily card. One tap, done."""
+    query = update.callback_query
+    db = context.bot_data["db"]
+
+    location = "outdoor" if query.data == CB_WORKOUT_OUTDOOR else "indoor"
+
+    day_number = await resolve_day_from_card(db, query.message.message_id)
+    if not day_number:
+        await query.answer("Card not found.", show_alert=True)
+        return
+
+    user = await db.get_user(update.effective_user.id)
+    if not user:
+        await query.answer("Register first! DM me /start", show_alert=True)
+        return
+
+    checkin = await db.get_checkin(update.effective_user.id, day_number)
+    if not checkin:
+        await db.create_checkin(update.effective_user.id, day_number, date.today().isoformat())
+        checkin = await db.get_checkin(update.effective_user.id, day_number)
+
+    # Check if both workouts already done
+    if checkin["workout_1_done"] and checkin["workout_2_done"]:
+        await query.answer(WORKOUT_ALREADY_DONE, show_alert=True)
+        return
+
+    # Check location conflict (can't do two of the same)
+    if checkin["workout_1_done"] and checkin["workout_1_location"] == location:
+        other = "outdoor" if location == "indoor" else "indoor"
+        await query.answer(
+            WORKOUT_WRONG_LOCATION.format(other_loc=location, needed_loc=other),
+            show_alert=True,
+        )
+        return
+
+    name = user["name"]
+    slot, just_completed = await db.log_workout(update.effective_user.id, day_number, "workout", location)
+
+    record_workout_time(update.effective_user.id, day_number)
+
+    if slot == 2:
+        await query.answer("2/2 done 💪", show_alert=True)
+    else:
+        await query.answer(f"1/2 — {location} logged", show_alert=True)
+
+    await refresh_card(context, day_number)
+    await db.log_event(update.effective_user.id, name, "workout_log", f"{location}, slot={slot}")
+
+    await check_simultaneous_workout(context, update.effective_user.id, name, day_number)
+    if just_completed:
+        await check_first_completion(context, name, day_number)
 
 
 async def workout_start_callback(
@@ -339,6 +397,8 @@ async def handle_custom_workout_name(update: Update, context: ContextTypes.DEFAU
 def get_workout_handlers() -> list:
     """Return all workout-related handlers."""
     return [
+        CallbackQueryHandler(workout_quick_callback, pattern=f"^{CB_WORKOUT_OUTDOOR}$"),
+        CallbackQueryHandler(workout_quick_callback, pattern=f"^{CB_WORKOUT_INDOOR}$"),
         CallbackQueryHandler(workout_start_callback, pattern=f"^{CB_WORKOUT}$"),
         CallbackQueryHandler(
             workout_type_callback, pattern=f"^{CB_WORKOUT_TYPE}"
