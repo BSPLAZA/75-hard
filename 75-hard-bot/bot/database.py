@@ -468,9 +468,9 @@ class Database:
         async with self._conn.execute(query, params) as cur:
             return await cur.fetchall()
 
-    async def resolve_feedback(self, fb_id: int) -> None:
-        """Mark a feedback item as resolved."""
+    async def resolve_feedback(self, fb_id: int, *, status: str = "resolved") -> None:
+        """Mark a feedback item with the given status."""
         await self._conn.execute(
-            "UPDATE feedback SET status = 'resolved' WHERE id = ?", (fb_id,)
+            "UPDATE feedback SET status = ? WHERE id = ?", (status, fb_id)
         )
         await self._conn.commit()
