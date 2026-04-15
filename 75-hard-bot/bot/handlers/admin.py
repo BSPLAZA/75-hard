@@ -242,14 +242,14 @@ async def fail_confirm(
     await db.eliminate_user(user_id, failed_day=day_number)
 
     remaining_days = 75 - day_number
-    redemption_cost = remaining_days + 25
+    redemption_cost = remaining_days + 50
 
     await update.message.reply_text(
         f"You've been eliminated on Day {day_number}. "
         f"You completed {days_completed} days. Respect.\n\n"
         f"Want back in? Type /redeem\n"
-        f"Cost: ${remaining_days} (remaining days) + $25 (penalty) = ${redemption_cost}\n"
-        f"The $25 goes into the prize pool. You can only redeem once."
+        f"Cost: ${remaining_days} (remaining days) + $50 (penalty) = ${redemption_cost}\n"
+        f"The $50 goes into the prize pool. You can only redeem once."
     )
 
     # Post farewell to the group
@@ -320,7 +320,7 @@ async def redeem_start(
     today = date.today()
     day_number = max(get_day_number(CHALLENGE_START_DATE, today), 1)
     remaining_days = 75 - day_number
-    penalty = 25
+    penalty = 50
     total_cost = remaining_days + penalty
 
     context.user_data["redeem_cost"] = total_cost
@@ -364,7 +364,7 @@ async def redeem_confirm(
     user_id = update.effective_user.id
     user = await db.get_user(user_id)
     name = user["name"] if user else update.effective_user.first_name
-    penalty = context.user_data.pop("redeem_penalty", 25)
+    penalty = context.user_data.pop("redeem_penalty", 50)
     total_cost = context.user_data.pop("redeem_cost", 0)
 
     # Reactivate
