@@ -294,8 +294,47 @@ async def admin_test_recap_command(
     if not _is_admin(update.effective_user.id):
         await update.message.reply_text("Admin only.")
         return
-    await evening_scoreboard_job(context)
-    await update.message.reply_text("Recap triggered.")
+    try:
+        from bot.utils.image_generator import render_recap_image
+        from bot.utils.progress import get_day_number, is_all_complete
+        from bot.config import CHALLENGE_START_DATE, CHALLENGE_DAYS
+
+        db = context.bot_data["db"]
+        chat_id = context.bot_data.get("group_chat_id") or update.effective_chat.id
+        day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+
+        checkins_raw = await db.get_all_checkins_for_day(day)
+        checkins = [dict(c) for c in checkins_raw]
+
+        if not checkins:
+            await update.message.reply_text("No checkins for today.")
+            return
+
+        complete = [c for c in checkins if is_all_complete(c)]
+        remaining = CHALLENGE_DAYS - day
+
+        image_buf = render_recap_image(day, checkins, CHALLENGE_DAYS)
+
+        # Build caption
+        reads = [
+            (c["name"], c.get("book_title"), c.get("reading_takeaway"))
+            for c in checkins
+            if c["reading_done"] and c.get("book_title")
+        ]
+        caption_parts = []
+        if reads:
+            caption_parts.append("📖  What we read today\n")
+            for name, book, takeaway in reads:
+                caption_parts.append(f"{name} — {book}")
+                if takeaway:
+                    caption_parts.append(f'"{takeaway}"\n')
+        caption_parts.append(f"{len(complete)}/{len(checkins)} completed · {remaining} days to go")
+        caption = "\n".join(caption_parts)
+
+        await context.bot.send_photo(chat_id=chat_id, photo=image_buf, caption=caption[:1024])
+    except Exception as e:
+        import traceback
+        await update.message.reply_text(f"Recap failed:\n{traceback.format_exc()[-500:]}")
 
 
 async def admin_test_nudge_command(

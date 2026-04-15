@@ -61,57 +61,44 @@ async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     if day > CHALLENGE_DAYS:
         return
 
-    checkins = await db.get_all_checkins_for_day(day)
+    checkins_raw = await db.get_all_checkins_for_day(day)
     active_users = await db.get_active_users()
-    if not checkins:
+    if not checkins_raw:
         return
 
+    # Convert to dicts immediately
+    checkins = [dict(c) for c in checkins_raw]
     complete = [c for c in checkins if is_all_complete(c)]
     remaining = CHALLENGE_DAYS - day
 
-    # Build monospace recap card (same style as daily card)
-    from bot.utils.card_renderer import render_card
-    card_text = render_card(
-        day_number=day,
-        active_count=len(active_users),
-        prize_pool=len(active_users) * 75,
-        checkins=checkins,
-    )
-    # Replace the header to say Recap
-    card_text = card_text.replace(
-        f"DAY {day} / {CHALLENGE_DAYS}",
-        f"DAY {day} RECAP",
-    )
+    from bot.utils.image_generator import render_recap_image
+    image_buf = render_recap_image(day, checkins, CHALLENGE_DAYS)
 
-    # Build the reading section as a separate message
+    # Build reading caption
     reads = [
         (c["name"], c.get("book_title"), c.get("reading_takeaway"))
         for c in checkins
         if c["reading_done"] and c.get("book_title")
     ]
 
-    recap_footer = f"\n{len(complete)}/{len(checkins)} completed · {remaining} days to go"
-
+    caption_parts = []
     if reads:
-        reading_lines = ["\n📖  What we read today\n"]
+        caption_parts.append("📖  What we read today\n")
         for name, book, takeaway in reads:
-            reading_lines.append(f"  {name} — {book}")
+            caption_parts.append(f"{name} — {book}")
             if takeaway:
-                reading_lines.append(f'  "{takeaway}"\n')
-        recap_footer = "\n".join(reading_lines) + "\n" + recap_footer
+                caption_parts.append(f'"{takeaway}"\n')
 
-    # Send the card (monospace)
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=card_text,
-        parse_mode="HTML",
-    )
-    # Send reading + footer (plain text, separate message)
-    if recap_footer.strip():
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=recap_footer.strip(),
-        )
+    caption_parts.append(f"{len(complete)}/{len(checkins)} completed · {remaining} days to go")
+    caption = "\n".join(caption_parts)
+
+    # Send as photo with caption (max 1024 chars for caption)
+    if len(caption) > 1024:
+        # Send image without caption, then caption as separate message
+        await context.bot.send_photo(chat_id=chat_id, photo=image_buf)
+        await context.bot.send_message(chat_id=chat_id, text=caption)
+    else:
+        await context.bot.send_photo(chat_id=chat_id, photo=image_buf, caption=caption)
 
 
 async def nudge_job(context: ContextTypes.DEFAULT_TYPE) -> None:
