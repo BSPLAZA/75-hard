@@ -1,2 +1,8 @@
 .playwright-mcp/
 google-apps-script.js
+
+# Bot
+75-hard-bot/.env
+75-hard-bot/.venv/
+75-hard-bot/data/
+__pycache__/
