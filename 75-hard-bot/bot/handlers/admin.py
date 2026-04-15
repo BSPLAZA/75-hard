@@ -569,6 +569,66 @@ async def admin_test_digest_command(
         await update.message.reply_text(f"Digest failed:\n{traceback.format_exc()[-500:]}")
 
 
+async def admin_test_transform_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Generate Bryan's transformation composite for testing."""
+    if not _is_admin(update.effective_user.id):
+        await update.message.reply_text("Admin only.")
+        return
+    try:
+        db = context.bot_data["db"]
+
+        # Find Bryan (or fall back to admin user)
+        user = await db.get_user_by_name("Bryan")
+        if not user:
+            user = await db.get_user(update.effective_user.id)
+        if not user:
+            await update.message.reply_text("No user found.")
+            return
+
+        photos = await db.get_photo_file_ids(user["telegram_id"])
+        if not photos:
+            await update.message.reply_text(
+                f"No photos found for {user['name']}."
+            )
+            return
+
+        day1_photo = photos[0]
+        latest_photo = photos[-1]
+
+        if day1_photo["day_number"] == latest_photo["day_number"]:
+            await update.message.reply_text(
+                f"Only one day of photos for {user['name']}. Need at least 2."
+            )
+            return
+
+        await update.message.reply_text("Generating transformation...")
+
+        from bot.utils.photo_transform import render_transformation
+
+        buf = await render_transformation(
+            bot=context.bot,
+            name=user["name"],
+            day1_file_id=day1_photo["photo_file_id"],
+            current_file_id=latest_photo["photo_file_id"],
+            current_day=latest_photo["day_number"],
+        )
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=buf,
+            caption=(
+                f"{user['name']}'s transformation -- "
+                f"Day {day1_photo['day_number']} to Day {latest_photo['day_number']}"
+            ),
+        )
+    except Exception as e:
+        import traceback
+        await update.message.reply_text(
+            f"Transform failed:\n{traceback.format_exc()[-500:]}"
+        )
+
+
 async def admin_confirm_payment_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -660,6 +720,7 @@ def get_admin_handlers() -> list:
         CommandHandler("admin_announce", admin_announce_command),
         CommandHandler("admin_reset_db", admin_reset_db_command),
         CommandHandler("admin_confirm_payment", admin_confirm_payment_command),
+        CommandHandler("admin_test_transform", admin_test_transform_command),
     ]
 
 

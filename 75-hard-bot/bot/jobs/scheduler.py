@@ -252,6 +252,55 @@ async def _gather_weekly_data(db, current_day: int) -> dict:
     }
 
 
+async def _send_transformation_dms(context, db, current_day: int) -> None:
+    """DM each eligible user their Day 1 vs current day transformation composite."""
+    from bot.utils.photo_transform import render_transformation
+
+    active_users = await db.get_active_users()
+    for user in active_users:
+        if not user["dm_registered"]:
+            continue
+        try:
+            photos = await db.get_photo_file_ids(user["telegram_id"])
+            if not photos:
+                continue
+
+            # Need a Day 1 photo
+            day1_photo = next(
+                (p for p in photos if p["day_number"] == 1), None
+            )
+            if not day1_photo:
+                continue
+
+            # Need a photo from the current day (or most recent)
+            latest_photo = photos[-1]
+            if latest_photo["day_number"] == 1:
+                continue  # only have Day 1
+
+            buf = await render_transformation(
+                bot=context.bot,
+                name=user["name"],
+                day1_file_id=day1_photo["photo_file_id"],
+                current_file_id=latest_photo["photo_file_id"],
+                current_day=latest_photo["day_number"],
+            )
+            await context.bot.send_photo(
+                chat_id=user["telegram_id"],
+                photo=buf,
+                caption=(
+                    f"Your transformation so far -- "
+                    f"Day 1 to Day {latest_photo['day_number']}. "
+                    f"Keep going!"
+                ),
+            )
+        except Exception as e:
+            logger.warning(
+                "Could not send transformation DM to %s: %s",
+                user["name"],
+                e,
+            )
+
+
 async def weekly_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """8 PM ET Sunday -- Post weekly digest with image, AI reflection, and reading log."""
     # Only run on Sundays
@@ -301,6 +350,10 @@ async def weekly_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             await context.bot.send_message(chat_id=chat_id, text=caption)
         else:
             await context.bot.send_photo(chat_id=chat_id, photo=image_buf, caption=caption)
+
+        # ── Send transformation DMs to users with Day 1 + current day photos ──
+        if current_day >= 7:
+            await _send_transformation_dms(context, db, current_day)
 
     except Exception as e:
         logger.error("Weekly digest job failed: %s", e)

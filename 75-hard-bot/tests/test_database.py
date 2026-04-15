@@ -265,6 +265,47 @@ async def test_log_photo(db):
     assert checkin["photo_file_id"] == "AgACAgIAA_photo_123"
 
 
+@pytest.mark.asyncio
+async def test_get_photo_file_ids(db):
+    await db.add_user(111, "Bryan")
+    await db.create_checkin(111, 1, "2026-04-15")
+    await db.create_checkin(111, 7, "2026-04-21")
+    await db.create_checkin(111, 14, "2026-04-28")
+
+    await db.log_photo(111, 1, "photo_day1")
+    await db.log_photo(111, 7, "photo_day7")
+    await db.log_photo(111, 14, "photo_day14")
+
+    photos = await db.get_photo_file_ids(111)
+    assert len(photos) == 3
+    assert photos[0]["day_number"] == 1
+    assert photos[0]["photo_file_id"] == "photo_day1"
+    assert photos[1]["day_number"] == 7
+    assert photos[2]["day_number"] == 14
+    assert photos[2]["photo_file_id"] == "photo_day14"
+
+
+@pytest.mark.asyncio
+async def test_get_photo_file_ids_empty(db):
+    await db.add_user(111, "Bryan")
+    photos = await db.get_photo_file_ids(111)
+    assert photos == []
+
+
+@pytest.mark.asyncio
+async def test_get_photo_file_ids_excludes_no_photo(db):
+    """Checkins without photos should not appear."""
+    await db.add_user(111, "Bryan")
+    await db.create_checkin(111, 1, "2026-04-15")
+    await db.create_checkin(111, 2, "2026-04-16")
+    # Only log photo for day 1
+    await db.log_photo(111, 1, "photo_day1")
+
+    photos = await db.get_photo_file_ids(111)
+    assert len(photos) == 1
+    assert photos[0]["day_number"] == 1
+
+
 # ── Completion auto-check ──────────────────────────────────────────────
 
 @pytest.mark.asyncio

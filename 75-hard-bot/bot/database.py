@@ -359,6 +359,16 @@ class Database:
 
     # ── photo ──────────────────────────────────────────────────────────
 
+    async def get_photo_file_ids(self, telegram_id: int) -> list[dict]:
+        """Get all photo file_ids for a user, ordered by day."""
+        async with self._conn.execute(
+            "SELECT day_number, photo_file_id FROM daily_checkins "
+            "WHERE telegram_id = ? AND photo_done = 1 AND photo_file_id IS NOT NULL "
+            "ORDER BY day_number",
+            (telegram_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
     async def log_photo(self, telegram_id: int, day_number: int, file_id: str) -> bool:
         """Log photo. Returns True if this completed all tasks for the day."""
         await self._conn.execute(
