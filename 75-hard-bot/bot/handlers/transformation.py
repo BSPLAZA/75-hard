@@ -6,6 +6,7 @@ from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
 
 from bot.utils.photo_transform import render_transformation
+from bot.utils.timelapse import render_timelapse
 
 
 async def transformation_command(
@@ -65,6 +66,56 @@ async def transformation_command(
         )
 
 
+async def timelapse_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Generate and send an animated GIF timelapse of all progress photos."""
+    if update.effective_chat.type != "private":
+        await update.message.reply_text("Use /timelapse in DMs.")
+        return
+
+    db = context.bot_data["db"]
+    user_id = update.effective_user.id
+    user = await db.get_user(user_id)
+
+    if not user:
+        await update.message.reply_text("Register first! DM me /start")
+        return
+
+    photos = await db.get_photo_file_ids(user_id)
+
+    if len(photos) < 2:
+        await update.message.reply_text(
+            "Need at least 2 days of photos for a timelapse. Keep going!"
+        )
+        return
+
+    await update.message.reply_text(f"building your timelapse from {len(photos)} photos... hang tight")
+
+    try:
+        gif = await render_timelapse(
+            bot=context.bot,
+            name=user["name"],
+            photos=photos,
+        )
+        if gif:
+            from telegram import InputFile
+            await context.bot.send_animation(
+                chat_id=update.effective_chat.id,
+                animation=InputFile(gif, filename="timelapse.mp4"),
+                caption=f"{user['name']}'s 75 Hard timelapse - Day {photos[0]['day_number']} to Day {photos[-1]['day_number']}",
+            )
+        else:
+            await update.message.reply_text("couldn't generate the timelapse. try again later")
+    except Exception as e:
+        await update.message.reply_text(f"timelapse failed: {e}")
+
+
 def get_transformation_handler() -> CommandHandler:
     """Return the /transformation command handler."""
     return CommandHandler("transformation", transformation_command)
+
+
+def get_timelapse_handler() -> CommandHandler:
+    """Return the /timelapse command handler."""
+    return CommandHandler("timelapse", timelapse_command)

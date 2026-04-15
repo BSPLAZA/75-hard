@@ -79,6 +79,16 @@ TOOLS = [
         },
     },
     {
+        "name": "get_transformation",
+        "description": "Generate a side-by-side photo comparing the user's Day 1 photo to their most recent photo. Use when user asks about their transformation, progress photos, before/after, etc.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_timelapse",
+        "description": "Generate an animated video timelapse of all the user's progress photos. Use when user asks for a timelapse, slideshow, animation of their photos, etc.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
         "name": "log_feedback",
         "description": "Log feedback, a bug report, or a suggestion",
         "input_schema": {
@@ -174,11 +184,26 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
         await db.add_feedback(user_id, tool_input["type"], tool_input["text"], f"day {day}")
         return f"Logged {tool_input['type']}: {tool_input['text']}"
 
+    elif tool_name == "get_transformation":
+        photos = await db.get_photo_file_ids(user_id)
+        if len(photos) < 2:
+            return "NOT_ENOUGH_PHOTOS: User needs at least 2 days of photos for a transformation."
+        return "MEDIA:transformation"
+
+    elif tool_name == "get_timelapse":
+        photos = await db.get_photo_file_ids(user_id)
+        if len(photos) < 2:
+            return "NOT_ENOUGH_PHOTOS: User needs at least 2 days of photos for a timelapse."
+        return "MEDIA:timelapse"
+
     return "Unknown tool."
 
 
 async def chat_with_luke(message: str, db, user_id: int) -> dict:
-    """Have a conversation with Luke. Returns {"text": str, "cover_url": str|None}."""
+    """Have a conversation with Luke. Returns {"text": str, "cover_url": str|None, "media": str|None}.
+
+    media can be "transformation" or "timelapse" — caller handles generating and sending the actual media.
+    """
     if not ANTHROPIC_API_KEY:
         return {"text": "AI not configured.", "cover_url": None}
 
@@ -198,6 +223,7 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
 
         # Process tool calls (may need multiple rounds)
         cover_url = None
+        media = None
         while response.stop_reason == "tool_use":
             tool_results = []
             for block in response.content:
@@ -213,6 +239,9 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
                         url = result.split("Cover URL: ")[1]
                         if url != "none found":
                             cover_url = url
+                    # Capture media requests
+                    if result.startswith("MEDIA:"):
+                        media = result.split("MEDIA:")[1]
 
             messages.append({"role": "assistant", "content": response.content})
             messages.append({"role": "user", "content": tool_results})
@@ -234,8 +263,8 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
         # Clean up
         text = text.replace("—", "-").replace("–", "-").strip('"').strip("'").strip()
 
-        return {"text": text, "cover_url": cover_url}
+        return {"text": text, "cover_url": cover_url, "media": media}
 
     except Exception as e:
         logger.error("Luke chat failed: %s", e)
-        return {"text": "something went wrong. try a /command instead", "cover_url": None}
+        return {"text": "something went wrong. try a /command instead", "cover_url": None, "media": None}

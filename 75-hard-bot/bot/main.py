@@ -15,7 +15,7 @@ from telegram.ext import (
 from bot.config import BOT_TOKEN, DATABASE_PATH, GROUP_CHAT_ID, PARTICIPANTS
 from bot.database import Database
 from bot.handlers.admin import get_admin_handlers, get_fail_handler, get_redeem_handler
-from bot.handlers.transformation import get_transformation_handler
+from bot.handlers.transformation import get_transformation_handler, get_timelapse_handler
 from bot.handlers.daily_card import get_card_command_handler
 from bot.handlers.diet import get_diet_callback_handler
 from bot.handlers.feedback import get_feedback_handlers
@@ -147,6 +147,7 @@ def main() -> None:
 
     # Command handlers
     app.add_handler(get_transformation_handler())
+    app.add_handler(get_timelapse_handler())
     app.add_handler(get_water_command_handler())
     for h in get_feedback_handlers():
         app.add_handler(h)
@@ -171,7 +172,18 @@ def main() -> None:
                 return
 
             db = context.bot_data["db"]
-            result = await chat_with_luke(message, db, update.effective_user.id)
+            user_id = update.effective_user.id
+            result = await chat_with_luke(message, db, user_id)
+
+            # Handle media requests (transformation/timelapse)
+            if result.get("media") == "transformation":
+                from bot.handlers.transformation import transformation_command
+                await transformation_command(update, context)
+                return
+            elif result.get("media") == "timelapse":
+                from bot.handlers.transformation import timelapse_command
+                await timelapse_command(update, context)
+                return
 
             if result.get("cover_url"):
                 await update.message.reply_photo(
