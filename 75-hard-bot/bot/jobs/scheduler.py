@@ -62,36 +62,47 @@ async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not checkins:
         return
 
-    complete = [c["name"] for c in checkins if is_all_complete(c)]
-    incomplete = [
-        (c["name"], get_missing_tasks(c)) for c in checkins if not is_all_complete(c)
-    ]
+    complete = [c for c in checkins if is_all_complete(c)]
+    incomplete = [c for c in checkins if not is_all_complete(c)]
+    remaining = CHALLENGE_DAYS - day
 
-    lines = [
-        f"DAY {day} WRAP-UP -- {len(active_users)}/{len(active_users)} STILL STANDING",
-        "",
-    ]
-    if complete:
-        lines.append(f"All tasks complete: {', '.join(complete)}")
-    if incomplete:
-        parts = [f"{name} (missing: {', '.join(m)})" for name, m in incomplete]
-        lines.append(f"Almost there: {', '.join(parts)}")
+    # Header
+    lines = [f"Day {day} Recap\n"]
 
+    # Per-person status
+    for c in sorted(checkins, key=lambda x: x["name"].lower()):
+        name = c["name"]
+        tasks_done = sum([
+            bool(c["workout_1_done"]),
+            bool(c["workout_2_done"]),
+            c["water_cups"] >= 16,
+            bool(c["diet_done"]),
+            bool(c["reading_done"]),
+            bool(c["photo_done"]),
+        ])
+
+        if is_all_complete(c):
+            lines.append(f"  {name}  —  6/6  done")
+        else:
+            missing = get_missing_tasks(c)
+            lines.append(f"  {name}  —  {tasks_done}/6  needs: {', '.join(missing).lower()}")
+
+    # Reading section
     reads = [
         (c["name"], c.get("book_title"), c.get("reading_takeaway"))
         for c in checkins
         if c["reading_done"] and c.get("book_title")
     ]
     if reads:
-        lines.extend(["", "📖 Today's reads:"])
+        lines.append("\n📖  What we read today\n")
         for name, book, takeaway in reads:
-            lines.append(f'  {name} — "{book}"')
+            lines.append(f"  {name} — {book}")
             if takeaway:
-                lines.append(f'  💬 "{takeaway}"')
-                lines.append("")
+                lines.append(f"  \"{takeaway}\"\n")
 
-    remaining = CHALLENGE_DAYS - day
-    lines.append(f"Day {day} in the books. {remaining} to go.")
+    # Footer
+    lines.append(f"\n{len(complete)}/{len(checkins)} completed all tasks.")
+    lines.append(f"{remaining} days to go.")
 
     await context.bot.send_message(chat_id=chat_id, text="\n".join(lines))
 
