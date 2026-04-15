@@ -1,6 +1,5 @@
 """Scheduled daily jobs for the 75 Hard bot using python-telegram-bot's JobQueue."""
 
-import html
 import pytz
 from datetime import date, time
 
@@ -68,67 +67,51 @@ async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     complete = [c for c in checkins if is_all_complete(c)]
-    incomplete = [c for c in checkins if not is_all_complete(c)]
     remaining = CHALLENGE_DAYS - day
 
-    parts = [f"<b>Day {day} Recap</b>"]
+    # Build monospace recap card (same style as daily card)
+    from bot.utils.card_renderer import render_card
+    card_text = render_card(
+        day_number=day,
+        active_count=len(active_users),
+        prize_pool=len(active_users) * 75,
+        checkins=checkins,
+    )
+    # Replace the header to say Recap
+    card_text = card_text.replace(
+        f"DAY {day} / {CHALLENGE_DAYS}",
+        f"DAY {day} RECAP",
+    )
 
-    # Completed section
-    if complete:
-        completed_lines = ["", "<b>Completed</b>"]
-        for c in sorted(complete, key=lambda x: x["name"].lower()):
-            safe_name = html.escape(c["name"])
-            completed_lines.append(f"\u2705 {safe_name} \u2014 6/6")
-        parts.extend(completed_lines)
-
-    # In Progress section
-    if incomplete:
-        progress_lines = ["", "<b>In Progress</b>"]
-        for c in sorted(incomplete, key=lambda x: x["name"].lower()):
-            safe_name = html.escape(c["name"])
-            tasks_done = sum([
-                bool(c["workout_1_done"]),
-                bool(c["workout_2_done"]),
-                c["water_cups"] >= 16,
-                bool(c["diet_done"]),
-                bool(c["reading_done"]),
-                bool(c["photo_done"]),
-            ])
-            missing = get_missing_tasks(c)
-            missing_str = ", ".join(m.lower() for m in missing)
-            progress_lines.append(
-                f"\u23f3 {safe_name} \u2014 {tasks_done}/6 (needs: {html.escape(missing_str)})"
-            )
-        parts.extend(progress_lines)
-
-    # Reading section -- expandable blockquote
+    # Build the reading section as a separate message
     reads = [
         (c["name"], c.get("book_title"), c.get("reading_takeaway"))
         for c in checkins
         if c["reading_done"] and c.get("book_title")
     ]
+
+    recap_footer = f"\n{len(complete)}/{len(checkins)} completed · {remaining} days to go"
+
     if reads:
-        reading_lines = ["\n<blockquote expandable>\U0001f4d6 Today's Reading\n"]
+        reading_lines = ["\n📖  What we read today\n"]
         for name, book, takeaway in reads:
-            safe_name = html.escape(name)
-            safe_book = html.escape(book or "")
-            reading_lines.append(f'{safe_name} \u2014 "{safe_book}"')
+            reading_lines.append(f"  {name} — {book}")
             if takeaway:
-                safe_takeaway = html.escape(takeaway)
-                reading_lines.append(f'"{safe_takeaway}"')
-            reading_lines.append("")
-        parts.append("\n".join(reading_lines).rstrip() + "</blockquote>")
+                reading_lines.append(f'  "{takeaway}"\n')
+        recap_footer = "\n".join(reading_lines) + "\n" + recap_footer
 
-    # Footer
-    parts.append(
-        f"\n{len(complete)}/{len(checkins)} completed \u00b7 {remaining} days to go"
-    )
-
+    # Send the card (monospace)
     await context.bot.send_message(
         chat_id=chat_id,
-        text="\n".join(parts),
+        text=card_text,
         parse_mode="HTML",
     )
+    # Send reading + footer (plain text, separate message)
+    if recap_footer.strip():
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=recap_footer.strip(),
+        )
 
 
 async def nudge_job(context: ContextTypes.DEFAULT_TYPE) -> None:

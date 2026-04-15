@@ -1,0 +1,1230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>75 Hard Bot — Spec Review</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a0a;
+    --surface: #141414;
+    --surface-2: #1e1e1e;
+    --surface-3: #282828;
+    --border: #2a2a2a;
+    --text: #e8e8e8;
+    --text-dim: #888;
+    --text-muted: #555;
+    --accent: #4ade80;
+    --accent-dim: #22543d;
+    --blue: #60a5fa;
+    --orange: #fb923c;
+    --red: #f87171;
+    --purple: #c084fc;
+    --yellow: #fbbf24;
+    --cyan: #22d3ee;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  /* Hero */
+  .hero {
+    padding: 80px 40px 60px;
+    text-align: center;
+    background: linear-gradient(180deg, #0f1a0f 0%, var(--bg) 100%);
+    border-bottom: 1px solid var(--border);
+  }
+  .hero h1 {
+    font-size: 3rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    margin-bottom: 12px;
+  }
+  .hero h1 span { color: var(--accent); }
+  .hero .subtitle {
+    font-size: 1.1rem;
+    color: var(--text-dim);
+    max-width: 600px;
+    margin: 0 auto 24px;
+  }
+  .hero .meta {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .hero .meta-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 0.85rem;
+  }
+  .hero .meta-item strong { color: var(--accent); }
+
+  /* Navigation */
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(10,10,10,0.9);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 40px;
+    overflow-x: auto;
+  }
+  .nav-inner {
+    display: flex;
+    gap: 4px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .nav a {
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 0.8rem;
+    font-weight: 500;
+    padding: 12px 14px;
+    white-space: nowrap;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+  }
+  .nav a:hover, .nav a.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  /* Main content */
+  .content {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 40px;
+  }
+
+  /* Sections */
+  .section {
+    margin-bottom: 60px;
+    scroll-margin-top: 60px;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 24px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-header .icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    flex-shrink: 0;
+  }
+  .section-header h2 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 16px;
+  }
+  .card h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text);
+  }
+  .card p {
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    margin-bottom: 8px;
+  }
+
+  /* Grid */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  @media (max-width: 768px) {
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .content { padding: 20px; }
+    .hero { padding: 40px 20px 30px; }
+    .hero h1 { font-size: 2rem; }
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  th {
+    text-align: left;
+    padding: 10px 12px;
+    background: var(--surface-2);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-dim);
+  }
+  tr:last-child td { border-bottom: none; }
+
+  /* Code / Terminal blocks */
+  .terminal {
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 10px;
+    padding: 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82rem;
+    line-height: 1.7;
+    overflow-x: auto;
+    white-space: pre;
+    color: #c9d1d9;
+    margin-bottom: 16px;
+  }
+  .terminal .highlight { color: var(--accent); }
+  .terminal .dim { color: #484f58; }
+  .terminal .blue { color: var(--blue); }
+  .terminal .orange { color: var(--orange); }
+  .terminal .yellow { color: var(--yellow); }
+  .terminal .red { color: var(--red); }
+
+  /* Telegram mockup */
+  .telegram-mock {
+    background: #17212b;
+    border-radius: 16px;
+    overflow: hidden;
+    max-width: 500px;
+    margin: 0 auto 24px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  .telegram-header {
+    background: #242f3d;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .telegram-avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8rem; font-weight: 700; color: #000;
+  }
+  .telegram-title { font-size: 0.9rem; font-weight: 600; }
+  .telegram-members { font-size: 0.7rem; color: #6c7883; }
+  .telegram-body { padding: 16px; }
+  .telegram-msg {
+    background: #182533;
+    border-radius: 0 12px 12px 12px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    max-width: 90%;
+  }
+  .telegram-msg.bot {
+    background: #182533;
+  }
+  .telegram-msg .sender {
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.75rem;
+    margin-bottom: 4px;
+  }
+  .telegram-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .telegram-btn {
+    background: rgba(74, 222, 128, 0.12);
+    color: var(--accent);
+    border: 1px solid rgba(74, 222, 128, 0.2);
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .telegram-btn:hover {
+    background: rgba(74, 222, 128, 0.2);
+  }
+
+  /* Tags */
+  .tag {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .tag-green { background: rgba(74,222,128,0.15); color: var(--accent); }
+  .tag-blue { background: rgba(96,165,250,0.15); color: var(--blue); }
+  .tag-orange { background: rgba(251,146,60,0.15); color: var(--orange); }
+  .tag-red { background: rgba(248,113,113,0.15); color: var(--red); }
+  .tag-purple { background: rgba(192,132,252,0.15); color: var(--purple); }
+
+  /* Participants */
+  .participant {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: var(--surface-2);
+    border-radius: 8px;
+    margin-bottom: 8px;
+  }
+  .participant .avatar {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: var(--surface-3);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.9rem; color: var(--accent);
+  }
+  .participant .info { flex: 1; }
+  .participant .name { font-weight: 600; font-size: 0.9rem; }
+  .participant .detail { color: var(--text-dim); font-size: 0.8rem; }
+
+  /* Flow diagram */
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 16px 0;
+  }
+  .flow-step {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+  .flow-arrow { color: var(--text-muted); font-size: 1.2rem; }
+
+  /* Timeline */
+  .timeline-item {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .timeline-time {
+    flex-shrink: 0;
+    width: 70px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--accent);
+    padding-top: 2px;
+  }
+  .timeline-content {
+    flex: 1;
+    padding-left: 16px;
+    border-left: 2px solid var(--border);
+  }
+  .timeline-content h4 {
+    font-size: 0.9rem;
+    margin-bottom: 4px;
+  }
+  .timeline-content p {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+  }
+
+  /* Checklist */
+  .checklist-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 0;
+    font-size: 0.85rem;
+  }
+  .checklist-check {
+    width: 20px; height: 20px;
+    border-radius: 4px;
+    border: 2px solid var(--border);
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  /* Roadmap */
+  .roadmap-phase {
+    position: relative;
+    padding-left: 24px;
+    margin-bottom: 24px;
+  }
+  .roadmap-phase::before {
+    content: '';
+    position: absolute;
+    left: 6px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--border);
+  }
+  .roadmap-dot {
+    position: absolute;
+    left: 0;
+    top: 4px;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    background: var(--bg);
+  }
+
+  /* File tree */
+  .file-tree {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    line-height: 1.8;
+    color: var(--text-dim);
+  }
+  .file-tree .dir { color: var(--blue); }
+  .file-tree .file { color: var(--text-dim); }
+  .file-tree .comment { color: var(--text-muted); font-style: italic; }
+
+  /* Collapsible */
+  details {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin-bottom: 12px;
+  }
+  details summary {
+    padding: 16px 20px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.95rem;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  details summary::before {
+    content: '\25B6';
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    transition: transform 0.2s;
+  }
+  details[open] summary::before {
+    transform: rotate(90deg);
+  }
+  details summary::-webkit-details-marker { display: none; }
+  details .detail-content {
+    padding: 0 20px 20px;
+  }
+
+  /* Status pill */
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .status-pill.approved {
+    background: rgba(74,222,128,0.12);
+    color: var(--accent);
+  }
+  .status-pill .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+</style>
+</head>
+<body>
+
+<!-- Hero -->
+<div class="hero">
+  <h1>75 Hard <span>Bot</span></h1>
+  <p class="subtitle">Telegram bot for daily challenge tracking. One card, five tasks, zero friction.</p>
+  <div class="meta">
+    <div class="meta-item"><strong>April 15</strong> &rarr; June 28, 2026</div>
+    <div class="meta-item"><strong>5</strong> participants</div>
+    <div class="meta-item"><strong>$375</strong> prize pool</div>
+    <div class="meta-item"><span class="status-pill approved"><span class="dot"></span>Design Approved</span></div>
+  </div>
+</div>
+
+<!-- Navigation -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="#overview">Overview</a>
+    <a href="#rules">Rules</a>
+    <a href="#participants">Participants</a>
+    <a href="#daily-card">Daily Card</a>
+    <a href="#interactions">Interactions</a>
+    <a href="#schedule">Schedule</a>
+    <a href="#onboarding">Onboarding</a>
+    <a href="#faq">FAQ</a>
+    <a href="#edge-cases">Edge Cases</a>
+    <a href="#feedback">Feedback System</a>
+    <a href="#tech">Tech Stack</a>
+    <a href="#data-model">Data Model</a>
+    <a href="#roadmap">Roadmap</a>
+    <a href="#checklist">Checklist</a>
+  </div>
+</nav>
+
+<div class="content">
+
+  <!-- Overview -->
+  <div class="section" id="overview">
+    <div class="section-header">
+      <div class="icon" style="background:rgba(74,222,128,0.12);">&#9889;</div>
+      <h2>Overview</h2>
+    </div>
+    <p style="color:var(--text-dim);font-size:0.95rem;margin-bottom:24px;max-width:700px;">
+      A Telegram bot that posts one daily card each morning. All participants interact with it throughout the day. The card updates in-place as people complete tasks, keeping the group chat clean for conversation.
+    </p>
+    <div class="grid-3">
+      <div class="card">
+        <h3>Zero-friction tracking</h3>
+        <p>Completing a check-in should be faster than not doing it. One tap for water, two taps for workouts.</p>
+      </div>
+      <div class="card">
+        <h3>Social accountability</h3>
+        <p>Everyone sees the card filling in throughout the day. Nobody gets called out. The progress speaks.</p>
+      </div>
+      <div class="card">
+        <h3>Clean group chat</h3>
+        <p>One updating card per day, not 30+ bot messages. Reading cards are the only extra posts, and they earn their space.</p>
+      </div>
+      <div class="card">
+        <h3>Adaptive personality</h3>
+        <p>The bot feels like a 6th group member, not a corporate wellness tool. Phase C adds Claude-powered contextual messages.</p>
+      </div>
+      <div class="card">
+        <h3>Data for the long haul</h3>
+        <p>Structured tracking enables Phase C features: photo timelines, reading journals, web dashboards.</p>
+      </div>
+      <div class="card">
+        <h3>Built-in feedback loop</h3>
+        <p>Users submit bugs and suggestions via commands. Bryan reviews in Telegram, builds in Claude Code, deploys on Fly.io.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rules -->
+  <div class="section" id="rules">
+    <div class="section-header">
+      <div class="icon" style="background:rgba(251,146,60,0.12);">&#128293;</div>
+      <h2>The 5 Rules</h2>
+    </div>
+    <p style="color:var(--text-dim);font-size:0.9rem;margin-bottom:20px;">Every day for 75 consecutive days. Miss one task on any day = elimination.</p>
+    <div class="grid-2" style="max-width:700px;">
+      <div class="card" style="border-left:3px solid var(--accent);">
+        <h3>&#127947; Two 45-min Workouts</h3>
+        <p>One must be outdoor, one must be indoor. Type and location logged via bot.</p>
+      </div>
+      <div class="card" style="border-left:3px solid var(--blue);">
+        <h3>&#128167; Drink a Gallon of Water</h3>
+        <p>16 cups (128 oz). Tracked via tap-to-increment on the daily card.</p>
+      </div>
+      <div class="card" style="border-left:3px solid var(--orange);">
+        <h3>&#127869; Follow Your Diet</h3>
+        <p>Your choice of diet. No alcohol. No cheat meals. One-tap confirm (toggleable for honesty).</p>
+      </div>
+      <div class="card" style="border-left:3px solid var(--purple);">
+        <h3>&#128214; Read 10 Pages</h3>
+        <p>Non-fiction only. Bot remembers your current book. Share a takeaway each day.</p>
+      </div>
+      <div class="card" style="border-left:3px solid var(--cyan);">
+        <h3>&#128248; Progress Photo</h3>
+        <p>Daily selfie sent via DM. Private by default. Stored for end-of-challenge transformation timeline.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Participants -->
+  <div class="section" id="participants">
+    <div class="section-header">
+      <div class="icon" style="background:rgba(96,165,250,0.12);">&#128101;</div>
+      <h2>Participants</h2>
+    </div>
+    <div style="max-width:500px;">
+      <div class="participant">
+        <div class="avatar">B</div>
+        <div class="info">
+          <div class="name">Bryan Plaza</div>
+          <div class="detail">$75 &middot; Organizer</div>
+        </div>
+        <span class="tag tag-orange">TBD</span>
+      </div>
+      <div class="participant">
+        <div class="avatar">K</div>
+        <div class="info">
+          <div class="name">Kat Voynarovski</div>
+          <div class="detail">$75</div>
+        </div>
+        <span class="tag tag-red">Unpaid</span>
+      </div>
+      <div class="participant">
+        <div class="avatar">Y</div>
+        <div class="info">
+          <div class="name">Yumna Fatima</div>
+          <div class="detail">$75</div>
+        </div>
+        <span class="tag tag-green">Paid</span>
+      </div>
+      <div class="participant">
+        <div class="avatar">G</div>
+        <div class="info">
+          <div class="name">Gaurav Sindhu</div>
+          <div class="detail">$75</div>
+        </div>
+        <span class="tag tag-red">Unpaid</span>
+      </div>
+      <div class="participant">
+        <div class="avatar">D</div>
+        <div class="info">
+          <div class="name">Dev Rana</div>
+          <div class="detail">$75</div>
+        </div>
+        <span class="tag tag-red">Unpaid</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Daily Card -->
+  <div class="section" id="daily-card">
+    <div class="section-header">
+      <div class="icon" style="background:rgba(74,222,128,0.12);">&#128196;</div>
+      <h2>The Daily Card</h2>
+    </div>
+    <p style="color:var(--text-dim);font-size:0.9rem;margin-bottom:20px;">One message, posted at 7 AM ET, pinned daily. Updates in-place as people tap buttons. This is the entire UI.</p>
+
+    <div class="grid-3">
+      <!-- Morning -->
+      <div>
+        <p style="font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:8px;">Morning (7 AM)</p>
+        <div class="telegram-mock">
+          <div class="telegram-header">
+            <div class="telegram-avatar">75</div>
+            <div>
+              <div class="telegram-title">75 Hard Squad</div>
+              <div class="telegram-members">5 members</div>
+            </div>
+          </div>
+          <div class="telegram-body">
+            <div class="telegram-msg bot">
+              <div class="sender">75 Hard Bot</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;line-height:1.6;white-space:pre;">DAY 1 / 75 &mdash; 5/5 STANDING &mdash; $375
+
+Bryan    ..  ..  0/16  ..  ..  ..
+Kat      ..  ..  0/16  ..  ..  ..
+Yumna    ..  ..  0/16  ..  ..  ..
+Gaurav   ..  ..  0/16  ..  ..  ..
+Dev      ..  ..  0/16  ..  ..  ..
+
+         W1  W2  WATER PIC READ DIET</div>
+              <div class="telegram-buttons">
+                <button class="telegram-btn">&#128167; Water +1</button>
+                <button class="telegram-btn">&#127947; Workout</button>
+                <button class="telegram-btn">&#128214; Read</button>
+                <button class="telegram-btn">&#128248; Photo</button>
+                <button class="telegram-btn">&#127869; Diet &#10003;</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mid-day -->
+      <div>
+        <p style="font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:8px;">Mid-day</p>
+        <div class="telegram-mock">
+          <div class="telegram-header">
+            <div class="telegram-avatar">75</div>
+            <div>
+              <div class="telegram-title">75 Hard Squad</div>
+              <div class="telegram-members">5 members</div>
+            </div>
+          </div>
+          <div class="telegram-body">
+            <div class="telegram-msg bot">
+              <div class="sender">75 Hard Bot</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;line-height:1.6;white-space:pre;">DAY 1 / 75 &mdash; 5/5 STANDING &mdash; $375
+
+Bryan    &#9989;  ..  &#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9617;&#9617;&#9617;&#9617;  6/16  ..  &#9989;  ..
+Kat      &#9989;  &#9989;  &#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9617;  9/16  &#9989;  ..  &#9989;
+Yumna    ..  ..  &#9608;&#9608;&#9617;&#9617;&#9617;&#9617;&#9617;&#9617;&#9617;&#9617;  2/16  ..  ..  ..
+Gaurav   ..  ..  &#9617;&#9617;&#9617;&#9617;&#9617;&#9617;&#9617;&#9617;&#9617;&#9617;  0/16  ..  ..  ..
+Dev      &#9989;  ..  &#9608;&#9608;&#9608;&#9608;&#9617;&#9617;&#9617;&#9617;&#9617;&#9617;  4/16  &#9989;  &#9989;  ..
+
+         W1  W2     WATER      PIC READ DIET</div>
+              <div class="telegram-buttons">
+                <button class="telegram-btn">&#128167; Water +1</button>
+                <button class="telegram-btn">&#127947; Workout</button>
+                <button class="telegram-btn">&#128214; Read</button>
+                <button class="telegram-btn">&#128248; Photo</button>
+                <button class="telegram-btn">&#127869; Diet &#10003;</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- End of day -->
+      <div>
+        <p style="font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:8px;">End of day (10 PM)</p>
+        <div class="telegram-mock">
+          <div class="telegram-header">
+            <div class="telegram-avatar">75</div>
+            <div>
+              <div class="telegram-title">75 Hard Squad</div>
+              <div class="telegram-members">5 members</div>
+            </div>
+          </div>
+          <div class="telegram-body">
+            <div class="telegram-msg bot">
+              <div class="sender">75 Hard Bot</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:0.75rem;line-height:1.6;white-space:pre;">DAY 1 / 75 &mdash; 5/5 STILL STANDING &mdash; $375
+
+Bryan    &#9989;  &#9989;  &#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608; 16/16  &#9989;  &#9989;  &#9989;  &#11088;
+Kat      &#9989;  &#9989;  &#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608; 16/16  &#9989;  &#9989;  &#9989;  &#11088;
+Yumna    &#9989;  &#9989;  &#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608; 16/16  &#9989;  &#9989;  &#9989;  &#11088;
+Gaurav   &#9989;  &#9989;  &#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9617;&#9617; 14/16  &#9989;  &#9989;  &#9989;
+Dev      &#9989;  &#9989;  &#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608; 16/16  &#9989;  &#9989;  &#9989;  &#11088;
+
+         W1  W2     WATER      PIC READ DIET</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Interactions -->
+  <div class="section" id="interactions">
+    <div class="section-header">
+      <div class="icon" style="background:rgba(192,132,252,0.12);">&#128073;</div>
+      <h2>Interaction Flows</h2>
+    </div>
+
+    <details open>
+      <summary>&#127947; Workout &mdash; 2 taps</summary>
+      <div class="detail-content">
+        <div class="flow">
+          <div class="flow-step">Tap [Workout]</div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step">Pick type<br><span style="font-size:0.7rem;color:var(--text-muted);">Run / Lift / Yoga / Bike / Swim / Other</span></div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step">Pick location<br><span style="font-size:0.7rem;color:var(--text-muted);">Outdoor / Indoor</span></div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step" style="border-color:var(--accent);color:var(--accent);">Card updates &#9989;</div>
+        </div>
+        <p style="color:var(--text-dim);font-size:0.85rem;margin-top:12px;">
+          <strong>Validation:</strong> One workout must be outdoor, one indoor. Bot prevents two of the same location.<br>
+          <strong>Correction:</strong> <code>/workout_undo</code> clears the last logged workout.
+        </p>
+      </div>
+    </details>
+
+    <details>
+      <summary>&#128167; Water &mdash; 1 tap per cup</summary>
+      <div class="detail-content">
+        <div class="flow">
+          <div class="flow-step">Tap [Water +1]</div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step">Count increments in DB</div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step">Card edits in-place</div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step" style="border-color:var(--blue);">Popup: "&#128167; 7/16"</div>
+        </div>
+        <p style="color:var(--text-dim);font-size:0.85rem;margin-top:12px;">
+          <strong>At 16/16:</strong> "You already hit your gallon!" No increment.<br>
+          <strong>Correction:</strong> <code>/water set 12</code> manually sets cup count.<br>
+          <strong>Concurrency:</strong> SQLite is source of truth. Retry edit once on race condition.
+        </p>
+      </div>
+    </details>
+
+    <details>
+      <summary>&#128214; Reading &mdash; DM conversation</summary>
+      <div class="detail-content">
+        <div class="flow">
+          <div class="flow-step">Tap [Read]</div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step">Bot DMs you</div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step">Same book?<br><span style="font-size:0.7rem;color:var(--text-muted);">[Yes] / [New book]</span></div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step">Share takeaway</div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step" style="border-color:var(--purple);">Reading card posts to group</div>
+        </div>
+        <p style="color:var(--text-dim);font-size:0.85rem;margin-top:12px;">
+          <strong>Book memory:</strong> Bot remembers your current book. Only asks when you switch.<br>
+          <strong>Book transitions:</strong> "Bryan finished 'Atomic Habits' after 20 days! Now starting 'Can't Hurt Me'"<br>
+          <strong>Correction:</strong> <code>/reread</code> to update today's entry.
+        </p>
+      </div>
+    </details>
+
+    <details>
+      <summary>&#128248; Photo &mdash; DM submission</summary>
+      <div class="detail-content">
+        <div class="flow">
+          <div class="flow-step">Tap [Photo]</div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step">Bot DMs: "Send photo"</div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step">Send selfie in DM</div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step" style="border-color:var(--cyan);">Card updates + group notification</div>
+        </div>
+        <p style="color:var(--text-dim);font-size:0.85rem;margin-top:12px;">
+          <strong>Privacy:</strong> Photos never posted to group. Stored via Telegram file_id.<br>
+          <strong>Replacement:</strong> Send another photo &mdash; latest one wins.<br>
+          <strong>Rejection:</strong> Non-photo files get "I need a photo, not a file!"
+        </p>
+      </div>
+    </details>
+
+    <details>
+      <summary>&#127869; Diet &mdash; 1 tap toggle</summary>
+      <div class="detail-content">
+        <div class="flow">
+          <div class="flow-step">Tap [Diet]</div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step" style="border-color:var(--orange);">Toggle on/off</div>
+        </div>
+        <p style="color:var(--text-dim);font-size:0.85rem;margin-top:12px;">
+          <strong>Toggle behavior:</strong> First tap confirms (&#9989;). Second tap un-confirms (&#11036;).<br>
+          <strong>Why toggle:</strong> If you confirm at 2 PM then cheat at dinner, you can undo it. Honesty is the foundation.
+        </p>
+      </div>
+    </details>
+  </div>
+
+  <!-- Daily Schedule -->
+  <div class="section" id="schedule">
+    <div class="section-header">
+      <div class="icon" style="background:rgba(251,191,36,0.12);">&#128337;</div>
+      <h2>Daily Schedule</h2>
+    </div>
+    <div style="max-width:600px;">
+      <div class="timeline-item">
+        <div class="timeline-time">7:00 AM</div>
+        <div class="timeline-content">
+          <h4>Morning Card</h4>
+          <p>Daily card posts to group, gets pinned. All checkins reset. Day counter increments.</p>
+        </div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-time">All day</div>
+        <div class="timeline-content">
+          <h4>Active Tracking</h4>
+          <p>Users tap buttons on the card. Water, workouts, reading, photos, diet logged throughout the day.</p>
+        </div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-time">10:00 PM</div>
+        <div class="timeline-content">
+          <h4>Evening Scoreboard</h4>
+          <p>Summary post: who completed everything, who's close, today's reading highlights, prize pool status.</p>
+        </div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-time">11:00 PM</div>
+        <div class="timeline-content">
+          <h4>DM Nudge</h4>
+          <p>Private message to users with incomplete tasks. Lists what's missing. Reminder about noon grace period.</p>
+        </div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-time">12:00 PM<br><span style="font-size:0.7rem;color:var(--text-muted);">(next day)</span></div>
+        <div class="timeline-content">
+          <h4>Noon Cutoff</h4>
+          <p>Previous day locks. Incomplete tasks become permanent. Bryan reviews any flags.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Onboarding -->
+  <div class="section" id="onboarding">
+    <div class="section-header">
+      <div class="icon" style="background:rgba(34,211,238,0.12);">&#128075;</div>
+      <h2>Onboarding Flow</h2>
+    </div>
+    <div class="grid-2" style="max-width:800px;">
+      <div class="card">
+        <h3>Step 1: Group Setup</h3>
+        <p>Bryan creates group, adds 5 people + bot. Bot gets <code>can_pin_messages</code> admin right.</p>
+      </div>
+      <div class="card">
+        <h3>Step 2: Welcome Message</h3>
+        <p>Bot posts: "DM me to register." Shows live counter: "Waiting for: Gaurav, Dev (3/5)"</p>
+      </div>
+      <div class="card">
+        <h3>Step 3: DM Registration</h3>
+        <p>User taps bot link, types name. Bot fuzzy-matches against participant list. Stores Telegram ID mapping.</p>
+      </div>
+      <div class="card">
+        <h3>Step 4: All In</h3>
+        <p>At 5/5: "Everyone's in! First card drops at 7 AM ET tomorrow." Pins the Rules &amp; FAQ.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- FAQ -->
+  <div class="section" id="faq">
+    <div class="section-header">
+      <div class="icon" style="background:rgba(96,165,250,0.12);">&#10067;</div>
+      <h2>Pinned FAQ</h2>
+    </div>
+    <p style="color:var(--text-dim);font-size:0.85rem;margin-bottom:16px;">Pinned permanently in the group. Covers rules, bot usage, and common questions.</p>
+    <div style="max-width:700px;">
+      <details>
+        <summary>What if I work out after midnight?</summary>
+        <div class="detail-content"><p>Log it for the day you're in. If it's 1 AM Tuesday, it counts for Tuesday.</p></div>
+      </details>
+      <details>
+        <summary>What if I forget to log something?</summary>
+        <div class="detail-content"><p>Backfill until noon the next day. Bot reminds at 11 PM if you have unchecked tasks.</p></div>
+      </details>
+      <details>
+        <summary>What counts as a "cup" of water?</summary>
+        <div class="detail-content"><p>8 oz / ~250 ml. A gallon = 16 cups = 128 oz.</p></div>
+      </details>
+      <details>
+        <summary>Can I change my diet mid-challenge?</summary>
+        <div class="detail-content"><p>Yes. Follow A diet. Whatever you commit to, follow it. No alcohol and no cheat meals are non-negotiable.</p></div>
+      </details>
+      <details>
+        <summary>What if I fail?</summary>
+        <div class="detail-content"><p>DM /fail. Get $1 back per day completed. Rest stays in the prize pool. You stay in the group.</p></div>
+      </details>
+      <details>
+        <summary>I tapped water too many times</summary>
+        <div class="detail-content"><p><code>/water set [number]</code> to correct your cup count.</p></div>
+      </details>
+      <details>
+        <summary>I logged the wrong workout</summary>
+        <div class="detail-content"><p><code>/workout_undo</code> to clear your last workout, then re-log via the card.</p></div>
+      </details>
+      <details>
+        <summary>Where is today's card?</summary>
+        <div class="detail-content"><p>Type <code>/card</code> and the bot will link you. It's also pinned at the top of the chat.</p></div>
+      </details>
+      <details>
+        <summary>I have an idea / Something is broken</summary>
+        <div class="detail-content"><p><code>/suggest [idea]</code> or <code>/bug [description]</code>. Bryan will see it.</p></div>
+      </details>
+    </div>
+  </div>
+
+  <!-- Edge Cases -->
+  <div class="section" id="edge-cases">
+    <div class="section-header">
+      <div class="icon" style="background:rgba(248,113,113,0.12);">&#9888;</div>
+      <h2>Edge Cases</h2>
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <h3>Old Card Taps</h3>
+        <p>Yesterday's card still in chat &mdash; if before noon grace period, apply to previous day. After noon: "This card has expired."</p>
+      </div>
+      <div class="card">
+        <h3>Failure Flow</h3>
+        <p>User DMs /fail &rarr; "Type CONFIRM" &rarr; posted to group with respect &rarr; $X returned &rarr; row removed from card &rarr; user stays in group.</p>
+      </div>
+      <div class="card">
+        <h3>Race Conditions</h3>
+        <p>Two simultaneous water taps: both write to SQLite (source of truth), retry message edit once on conflict.</p>
+      </div>
+      <div class="card">
+        <h3>Photo Edge Cases</h3>
+        <p>Multiple photos: latest wins. Non-photo files: rejected. Retake: just send another.</p>
+      </div>
+      <div class="card">
+        <h3>Book Changes</h3>
+        <p>Bot remembers current book. "Still reading X?" &rarr; [Yes] / [New book]. Tracks finished books for stats.</p>
+      </div>
+      <div class="card">
+        <h3>Diet Toggle</h3>
+        <p>Tapping diet again un-confirms it. Honesty-first design for cheat meal situations.</p>
+      </div>
+      <div class="card">
+        <h3>Group Migration</h3>
+        <p>Telegram auto-migrates to supergroup: bot handles MigrateToChatId update, stores new chat_id, keeps running.</p>
+      </div>
+      <div class="card">
+        <h3>Bot Downtime</h3>
+        <p>On restart: checks day, posts card if missing, SQLite preserved on Fly.io volume. FAQ: "Honor system until it's back."</p>
+      </div>
+      <div class="card">
+        <h3>Unregistered DM</h3>
+        <p>Tapping Read/Photo without DM registration: "I can't DM you yet! Tap the link to start."</p>
+      </div>
+      <div class="card">
+        <h3>Day 75 &mdash; End</h3>
+        <p>Celebration card instead of normal card. Final stats, books read, prize pool distribution. Bot goes dormant.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Feedback System -->
+  <div class="section" id="feedback">
+    <div class="section-header">
+      <div class="icon" style="background:rgba(251,191,36,0.12);">&#128172;</div>
+      <h2>Feedback &amp; Improvement System</h2>
+    </div>
+    <p style="color:var(--text-dim);font-size:0.9rem;margin-bottom:20px;">The bot is its own issue tracker. Users submit, Bryan reviews, builds, deploys, closes the loop.</p>
+    <div class="grid-2" style="max-width:800px;">
+      <div class="card">
+        <h3>User Commands</h3>
+        <table>
+          <tr><td><code>/feedback &lt;text&gt;</code></td><td>General feedback</td></tr>
+          <tr><td><code>/bug &lt;text&gt;</code></td><td>Report something broken</td></tr>
+          <tr><td><code>/suggest &lt;text&gt;</code></td><td>Request a feature</td></tr>
+        </table>
+        <p style="margin-top:12px;">Bot captures context (day, checkin state), confirms with &#128077;.</p>
+      </div>
+      <div class="card">
+        <h3>Admin Review</h3>
+        <table>
+          <tr><td><code>/admin_feedback</code></td><td>All unresolved items</td></tr>
+          <tr><td><code>/admin_feedback bugs</code></td><td>Bugs only</td></tr>
+          <tr><td><code>/admin_resolve [id] [status]</code></td><td>Mark resolved</td></tr>
+        </table>
+        <p style="margin-top:12px;">Statuses: acknowledged, implemented, wontfix.</p>
+      </div>
+    </div>
+    <div class="card" style="max-width:800px;margin-top:16px;">
+      <h3>Improvement Workflow</h3>
+      <div class="flow">
+        <div class="flow-step">/admin_feedback<br><span style="font-size:0.7rem;color:var(--text-muted);">Review in Telegram</span></div>
+        <div class="flow-arrow">&rarr;</div>
+        <div class="flow-step">Triage<br><span style="font-size:0.7rem;color:var(--text-muted);">Decide priority</span></div>
+        <div class="flow-arrow">&rarr;</div>
+        <div class="flow-step">Claude Code<br><span style="font-size:0.7rem;color:var(--text-muted);">Build the fix</span></div>
+        <div class="flow-arrow">&rarr;</div>
+        <div class="flow-step">flyctl deploy<br><span style="font-size:0.7rem;color:var(--text-muted);">Push update</span></div>
+        <div class="flow-arrow">&rarr;</div>
+        <div class="flow-step" style="border-color:var(--accent);">/admin_resolve<br><span style="font-size:0.7rem;color:var(--accent);">DMs user "implemented!"</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tech Stack -->
+  <div class="section" id="tech">
+    <div class="section-header">
+      <div class="icon" style="background:rgba(192,132,252,0.12);">&#128736;</div>
+      <h2>Tech Stack</h2>
+    </div>
+    <div class="grid-2" style="max-width:800px;">
+      <div class="card">
+        <table>
+          <tr><th>Component</th><th>Choice</th></tr>
+          <tr><td>Language</td><td>Python 3.11+</td></tr>
+          <tr><td>Bot Framework</td><td>python-telegram-bot v20+ (async)</td></tr>
+          <tr><td>Database</td><td>SQLite (persistent volume)</td></tr>
+          <tr><td>Hosting</td><td>Fly.io (free tier)</td></tr>
+          <tr><td>Bot Setup</td><td>BotFather</td></tr>
+          <tr><td>LLM (Phase C)</td><td>Claude API</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <h3>File Structure</h3>
+        <div class="file-tree">
+<span class="dir">bot/</span>
+  main.py <span class="comment"># Entry point</span>
+  config.py <span class="comment"># Env vars, constants</span>
+  database.py <span class="comment"># SQLite setup</span>
+  <span class="dir">handlers/</span>
+    daily_card.py, workout.py, water.py
+    reading.py, photo.py, diet.py
+    feedback.py, commands.py, admin.py
+  <span class="dir">jobs/</span>
+    scheduler.py <span class="comment"># 7AM, 10PM, 11PM, noon</span>
+  <span class="dir">templates/</span>
+    messages.py <span class="comment"># All message templates</span>
+  <span class="dir">utils/</span>
+    card_renderer.py, progress.py
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Data Model -->
+  <div class="section" id="data-model">
+    <div class="section-header">
+      <div class="icon" style="background:rgba(96,165,250,0.12);">&#128451;</div>
+      <h2>Data Model</h2>
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <h3>users</h3>
+        <table>
+          <tr><th>Column</th><th>Type</th></tr>
+          <tr><td>telegram_id</td><td>INTEGER PK</td></tr>
+          <tr><td>name</td><td>TEXT</td></tr>
+          <tr><td>paid</td><td>BOOLEAN</td></tr>
+          <tr><td>active</td><td>BOOLEAN</td></tr>
+          <tr><td>failed_day</td><td>INTEGER (nullable)</td></tr>
+          <tr><td>current_book</td><td>TEXT</td></tr>
+          <tr><td>dm_registered</td><td>BOOLEAN</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <h3>daily_checkins</h3>
+        <table>
+          <tr><th>Column</th><th>Type</th></tr>
+          <tr><td>telegram_id</td><td>INTEGER FK</td></tr>
+          <tr><td>day_number</td><td>INTEGER (1-75)</td></tr>
+          <tr><td>workout_1/2_type</td><td>TEXT</td></tr>
+          <tr><td>workout_1/2_location</td><td>TEXT</td></tr>
+          <tr><td>water_cups</td><td>INTEGER (0-16)</td></tr>
+          <tr><td>diet_done</td><td>BOOLEAN</td></tr>
+          <tr><td>reading_done</td><td>BOOLEAN</td></tr>
+          <tr><td>book_title, takeaway</td><td>TEXT</td></tr>
+          <tr><td>photo_file_id</td><td>TEXT</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <h3>books</h3>
+        <table>
+          <tr><th>Column</th><th>Type</th></tr>
+          <tr><td>telegram_id</td><td>INTEGER FK</td></tr>
+          <tr><td>title</td><td>TEXT</td></tr>
+          <tr><td>started_day</td><td>INTEGER</td></tr>
+          <tr><td>finished_day</td><td>INTEGER (nullable)</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <h3>feedback</h3>
+        <table>
+          <tr><th>Column</th><th>Type</th></tr>
+          <tr><td>telegram_id</td><td>INTEGER FK</td></tr>
+          <tr><td>type</td><td>TEXT (feedback/bug/suggest)</td></tr>
+          <tr><td>text</td><td>TEXT</td></tr>
+          <tr><td>context</td><td>TEXT (auto-captured)</td></tr>
+          <tr><td>status</td><td>TEXT (new/ack/done/wontfix)</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Roadmap -->
+  <div class="section" id="roadmap">
+    <div class="section-header">
+      <div class="icon" style="background:rgba(74,222,128,0.12);">&#128640;</div>
+      <h2>Phase C Roadmap</h2>
+    </div>
+    <div style="max-width:600px;">
+      <div class="roadmap-phase">
+        <div class="roadmap-dot"></div>
+        <p style="font-size:0.75rem;font-weight:600;text-transform:uppercase;color:var(--accent);margin-bottom:4px;">Week 1</p>
+        <div class="card" style="margin-bottom:8px;"><h3>Claude Personality</h3><p>LLM-generated morning cards with context-aware encouragement based on group data.</p></div>
+        <div class="card"><h3>Easter Eggs</h3><p>Day 7, 30, 50, 69, 75 milestones. Early bird awards. Simultaneous workout detection.</p></div>
+      </div>
+      <div class="roadmap-phase">
+        <div class="roadmap-dot" style="border-color:var(--blue);"></div>
+        <p style="font-size:0.75rem;font-weight:600;text-transform:uppercase;color:var(--blue);margin-bottom:4px;">Week 2</p>
+        <div class="card" style="margin-bottom:8px;"><h3>Weekly Digest</h3><p>Sunday recap with stats, reading log, hydration trends, workout variety.</p></div>
+        <div class="card"><h3>Photo Timeline</h3><p>DM users their Day 1 vs current side-by-side comparison.</p></div>
+      </div>
+      <div class="roadmap-phase">
+        <div class="roadmap-dot" style="border-color:var(--purple);"></div>
+        <p style="font-size:0.75rem;font-weight:600;text-transform:uppercase;color:var(--purple);margin-bottom:4px;">Week 3</p>
+        <div class="card" style="margin-bottom:8px;"><h3>Book Covers</h3><p>Auto-fetch cover art for reading cards. Visual reading journey.</p></div>
+        <div class="card"><h3>Web Dashboard</h3><p>Companion site showing group progress, reading log, leaderboard.</p></div>
+      </div>
+      <div class="roadmap-phase">
+        <div class="roadmap-dot" style="border-color:var(--orange);"></div>
+        <p style="font-size:0.75rem;font-weight:600;text-transform:uppercase;color:var(--orange);margin-bottom:4px;">Week 4</p>
+        <div class="card"><h3>Smartwatch Integration</h3><p>Apple Health Shortcuts, Garmin Connect API for auto-logging workouts.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Success Checklist -->
+  <div class="section" id="checklist">
+    <div class="section-header">
+      <div class="icon" style="background:rgba(74,222,128,0.12);">&#9745;</div>
+      <h2>POC Success Criteria</h2>
+    </div>
+    <div class="card" style="max-width:600px;">
+      <div class="checklist-item"><div class="checklist-check"></div>Bot posts daily card at 7 AM ET</div>
+      <div class="checklist-item"><div class="checklist-check"></div>All 5 button interactions work (water, workout, reading, photo, diet)</div>
+      <div class="checklist-item"><div class="checklist-check"></div>Daily card updates in-place correctly</div>
+      <div class="checklist-item"><div class="checklist-check"></div>Reading cards post to the group with book memory</div>
+      <div class="checklist-item"><div class="checklist-check"></div>Photo submissions work via DM</div>
+      <div class="checklist-item"><div class="checklist-check"></div>Evening scoreboard posts at 10 PM ET</div>
+      <div class="checklist-item"><div class="checklist-check"></div>11 PM nudge DMs go to users with incomplete tasks</div>
+      <div class="checklist-item"><div class="checklist-check"></div>Pinned rules/FAQ message is in place</div>
+      <div class="checklist-item"><div class="checklist-check"></div>Feedback commands (/feedback, /bug, /suggest) work</div>
+      <div class="checklist-item"><div class="checklist-check"></div>All 5 participants have registered via DM</div>
+    </div>
+  </div>
+
+</div>
+
+<div style="text-align:center;padding:40px;color:var(--text-muted);font-size:0.8rem;border-top:1px solid var(--border);">
+  75 Hard Bot &middot; Design Spec &middot; April 14, 2026 &middot; Built with Claude
+</div>
+
+<script>
+  // Smooth scroll for nav links
+  document.querySelectorAll('.nav a').forEach(a => {
+    a.addEventListener('click', e => {
+      e.preventDefault();
+      const target = document.querySelector(a.getAttribute('href'));
+      if (target) target.scrollIntoView({ behavior: 'smooth' });
+    });
+  });
+
+  // Highlight active nav on scroll
+  const sections = document.querySelectorAll('.section');
+  const navLinks = document.querySelectorAll('.nav a');
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        navLinks.forEach(l => l.classList.remove('active'));
+        const link = document.querySelector(`.nav a[href="#${entry.target.id}"]`);
+        if (link) link.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-100px 0px -60% 0px' });
+  sections.forEach(s => observer.observe(s));
+</script>
+</body>
+</html>
