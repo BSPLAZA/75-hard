@@ -55,7 +55,8 @@ WHAT YOU CAN DO:
 - Log feedback, bugs, suggestions
 - Generate transformation photos and timelapses
 - Give honest assessments of how someone or the group is doing
-- Backfill yesterday's tasks before noon PT (use backfill_task). If someone says they forgot to log a workout, water, reading, or diet from yesterday, help them backfill it. Only works before noon PT the next day.
+- Backfill yesterday's tasks before noon PT (use backfill_task for workout/water/reading/diet). Day 1 has a grace window — Day 1 backfills are allowed any time, no cutoff. From Day 2 onwards, the noon PT cutoff applies.
+- Backfill yesterday's PHOTO with request_backfill_photo. Use when the user says they forgot to send their progress photo for a previous day. The tool will prompt them to send the photo; the next photo they DM will be saved to that day. Same Day 1 grace applies.
 
 WHAT YOU CAN'T DO:
 - Mark tasks as complete (people do that via the daily card)
@@ -192,7 +193,7 @@ TOOLS = [
     },
     {
         "name": "backfill_task",
-        "description": "Log a task for YESTERDAY that the user forgot. Only works before noon PT. Use when user says they forgot to log something from yesterday.",
+        "description": "Log a non-photo task for YESTERDAY that the user forgot. Only works before noon PT (with a one-time grace window for Day 1). Use when user says they forgot to log something from yesterday.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -207,6 +208,17 @@ TOOLS = [
                 },
             },
             "required": ["task"],
+        },
+    },
+    {
+        "name": "request_backfill_photo",
+        "description": "Use when the user says they forgot to send a progress photo for a previous day and want to upload it now. This sets up a one-shot photo intake for the specified day; the next photo the user DMs will be saved to that day. Only allow yesterday (with Day 1 grace).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "day_number": {"type": "integer", "description": "The day this photo should be saved to (typically yesterday)"},
+            },
+            "required": ["day_number"],
         },
     },
     {
@@ -437,13 +449,15 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
         _PT = _pytz.timezone("US/Pacific")
         now_pt = datetime.now(_PT)
 
-        # Only allow backfill before noon PT (matches noon_cutoff_job)
-        if now_pt.hour >= 12:
-            return "DENIED: It's past 12pm PT / 3pm ET. Yesterday's tasks are locked in. Backfill window closed."
-
         yesterday = day - 1
         if yesterday < 1:
             return "DENIED: There's no yesterday to backfill. The challenge just started."
+
+        # Day 1 grace: first day is for figuring out the system, no noon PT cutoff.
+        # From Day 2 onward, normal 12pm PT lock applies.
+        is_day_1_grace = yesterday == 1
+        if not is_day_1_grace and now_pt.hour >= 12:
+            return "DENIED: It's past 12pm PT / 3pm ET. Yesterday's tasks are locked in. Backfill window closed."
 
         # Ensure checkin exists for yesterday
         checkin = await db.get_checkin(user_id, yesterday)
@@ -484,6 +498,36 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
             return f"Unknown task type: {task}"
 
         return result_msg
+
+    elif tool_name == "request_backfill_photo":
+        import pytz as _pytz
+        _PT = _pytz.timezone("US/Pacific")
+        now_pt = datetime.now(_PT)
+
+        target_day = int(tool_input.get("day_number", day - 1))
+        yesterday = day - 1
+
+        if target_day < 1:
+            return "DENIED: There's no day before Day 1 to backfill."
+        if target_day > day:
+            return "DENIED: That day hasn't happened yet."
+        if target_day < yesterday:
+            return f"DENIED: Day {target_day} is too far back. Photos can only be backfilled for yesterday."
+
+        # Day 1 grace: skip noon PT cutoff for Day 1 specifically.
+        is_day_1_grace = target_day == 1
+        if not is_day_1_grace and target_day == yesterday and now_pt.hour >= 12:
+            return "DENIED: It's past 12pm PT / 3pm ET. Yesterday's photo window closed."
+
+        # Ensure the checkin row exists so log_photo will succeed.
+        checkin = await db.get_checkin(user_id, target_day)
+        if not checkin:
+            from datetime import timedelta as _td
+            checkin_date = (now_pt.date() - _td(days=(day - target_day))).isoformat()
+            await db.create_checkin(user_id, target_day, checkin_date)
+
+        # Signal the wrapper to set photo_day so the next photo lands on target_day.
+        return f"BACKFILL_PHOTO:{target_day}"
 
     elif tool_name == "escalate_to_admin":
         reason = tool_input.get("reason", "No reason given")
@@ -569,6 +613,7 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
         # Process tool calls (may need multiple rounds)
         cover_url = None
         media = None
+        backfill_photo_day: int | None = None
         tools_called: list[str] = []
         context_data = {"refresh_card": False, "refresh_days": set()}
         while response.stop_reason == "tool_use":
@@ -587,6 +632,12 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
                         url = result.split("Cover URL: ")[1]
                         if url != "none found":
                             cover_url = url
+                    # Capture photo-backfill signal so the wrapper can set photo_day
+                    if result.startswith("BACKFILL_PHOTO:"):
+                        try:
+                            backfill_photo_day = int(result.split("BACKFILL_PHOTO:")[1])
+                        except (ValueError, IndexError):
+                            pass
                     # Capture media requests
                     if result.startswith("MEDIA:"):
                         media = result.split("MEDIA:")[1]
@@ -650,6 +701,7 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
             "media": media,
             "refresh_card": context_data["refresh_card"],
             "refresh_days": context_data["refresh_days"],
+            "backfill_photo_day": backfill_photo_day,
         }
 
     except Exception as e:

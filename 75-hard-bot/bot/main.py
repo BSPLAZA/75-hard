@@ -211,6 +211,13 @@ def main() -> None:
                     if bf_day != day:
                         await refresh_card(context, bf_day)
 
+            # If Luke set up a photo backfill, prime user_data so the next
+            # DM photo lands on the requested day instead of today.
+            bf_photo_day = result.get("backfill_photo_day")
+            if bf_photo_day:
+                context.user_data["awaiting_photo"] = True
+                context.user_data["photo_day"] = bf_photo_day
+
             if result.get("cover_url"):
                 await update.message.reply_photo(
                     photo=result["cover_url"],
