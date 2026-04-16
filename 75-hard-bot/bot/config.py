@@ -17,7 +17,16 @@ WORKOUT_TYPES = ["run", "lift", "yoga", "bike", "swim", "other"]
 WORKOUT_LOCATIONS = ["outdoor", "indoor"]
 
 # Pre-loaded participant names for registration matching
-PARTICIPANTS = ["Bryan", "Kat", "Yumna", "Gaurav", "Dev"]
+PARTICIPANTS = ["Bryan", "Kat", "Yumna", "Gaurav"]
+
+# DM same-day reminder fires at 10pm in each user's local TZ.
+# Only users in this dict get the nudge; missing users get nothing.
+USER_TIMEZONES = {
+    "Kat": "US/Eastern",
+    "Gaurav": "US/Eastern",
+    "Bryan": "US/Pacific",
+    "Yumna": "US/Pacific",
+}
 
 # Callback data prefixes (used to route inline button presses)
 CB_WATER = "water_plus"

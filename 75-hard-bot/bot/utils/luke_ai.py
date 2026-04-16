@@ -106,12 +106,18 @@ async def generate_morning_message(
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=250,
+            max_tokens=120,
             system=LUKE_SYSTEM_PROMPT,
             messages=[
                 {
                     "role": "user",
-                    "content": f"Write a morning message for today.\n\n{context}",
+                    "content": (
+                        "Write a SHORT morning greeting for today. 2-3 sentences max.\n"
+                        "A recap image of yesterday will follow your message, so DO NOT list "
+                        "who finished or didn't — just briefly nod to yesterday and welcome today.\n"
+                        "Keep it tight and human.\n\n"
+                        f"{context}"
+                    ),
                 }
             ],
         )

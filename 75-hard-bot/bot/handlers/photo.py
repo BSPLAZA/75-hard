@@ -11,8 +11,6 @@ from bot.handlers.daily_card import refresh_card, resolve_day_from_card
 from bot.utils.easter_eggs import check_first_completion
 from bot.templates.messages import (
     PHOTO_ASK,
-    PHOTO_CHECK_DM,
-    PHOTO_GROUP_NOTIFY,
     PHOTO_NEED_PHOTO,
     PHOTO_SAVED,
     PHOTO_UPDATED,
@@ -40,26 +38,16 @@ async def photo_start_callback(
     checkin = await db.get_checkin(update.effective_user.id, day_number)
     if not checkin:
         await db.create_checkin(
-            update.effective_user.id, day_number, today.isoformat()
+            update.effective_user.id, day_number, today_et().isoformat()
         )
 
     await query.answer("check your DMs 📸", show_alert=True)
-
-    # DM them directly with a prompt
-    try:
-        await context.bot.send_message(
-            chat_id=update.effective_user.id,
-            text=f"send me your Day {day_number} progress photo 📸",
-        )
-    except Exception:
-        await query.answer("DM me first — tap t.me/lockedinlukebot to start", show_alert=True)
-        return
 
     # Mark that the user should send a photo (works in group or DM)
     context.user_data["awaiting_photo"] = True
     context.user_data["photo_day"] = day_number
 
-    # DM the user
+    # DM the user with the prompt
     try:
         await context.bot.send_message(
             chat_id=update.effective_user.id,
@@ -68,7 +56,7 @@ async def photo_start_callback(
     except Exception:
         await query.message.reply_text(
             f"@{update.effective_user.username or update.effective_user.first_name} "
-            "I can't DM you! Tap t.me/{bot_username}?start=register first."
+            "I can't DM you! Tap t.me/lockedinlukebot to start a chat first."
         )
 
 
@@ -123,24 +111,7 @@ async def handle_dm_photo(
     if just_completed:
         name_for_egg = user["name"] if user else update.effective_user.first_name
         await check_first_completion(context, name_for_egg, day_number)
-
-    # Notify the group (only on first submission, not replacements)
-    group_chat_id = context.bot_data.get("group_chat_id")
-    if group_chat_id and not already_had_photo:
-        name = user["name"]
-        # Count how many users have submitted photos today
-        checkins = await db.get_all_checkins_for_day(day_number)
-        photo_count = sum(1 for c in checkins if c["photo_done"])
-        total = len(checkins)
-        try:
-            await context.bot.send_message(
-                chat_id=group_chat_id,
-                text=PHOTO_GROUP_NOTIFY.format(
-                    name=name, count=photo_count, total=total
-                ),
-            )
-        except Exception:
-            pass
+    # Photos are private — no group notification on submission.
 
 
 async def handle_dm_document(

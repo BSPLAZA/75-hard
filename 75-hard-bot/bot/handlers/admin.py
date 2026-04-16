@@ -13,7 +13,7 @@ from telegram.ext import (
 
 from bot.config import ADMIN_USER_ID, CHALLENGE_START_DATE
 from bot.handlers.daily_card import post_daily_card, refresh_card
-from bot.jobs.scheduler import evening_scoreboard_job, nudge_job, weekly_digest_job
+from bot.jobs.scheduler import evening_scoreboard_job, nudge_job_et, nudge_job_pt, weekly_digest_job
 from bot.templates.messages import FAIL_CONFIRM, FAIL_DONE
 from bot.utils.progress import today_et, get_day_number, get_current_challenge_day
 
@@ -533,12 +533,13 @@ async def admin_test_morning_command(
 async def admin_test_nudge_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Trigger the 11 PM nudge DMs for testing."""
+    """Trigger same-day nudge DMs (both ET and PT) for testing."""
     if not _is_admin(update.effective_user.id):
         await _admin_reply(update, context, "Admin only.")
         return
-    await nudge_job(context)
-    await _admin_reply(update, context, "Nudge triggered.")
+    await nudge_job_et(context)
+    await nudge_job_pt(context)
+    await _admin_reply(update, context, "Nudge triggered (ET + PT).")
 
 
 async def admin_test_digest_command(

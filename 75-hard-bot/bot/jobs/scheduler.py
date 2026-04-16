@@ -21,7 +21,12 @@ PT = pytz.timezone("US/Pacific")
 
 
 async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """7 AM ET -- Post daily card. Day 1 includes participant intros."""
+    """7 AM ET -- Daily morning sequence in one shot:
+      1. Short AI greeting (with yesterday context for prompt only)
+      2. Yesterday's recap image (snapshot — lock isn't until 3pm ET)
+      3. Bookshelf image (if anyone read yesterday)
+      4. Today's daily card with buttons
+    """
     db = context.bot_data["db"]
     day = get_day_number(CHALLENGE_START_DATE, today_et())
     if not (1 <= day <= CHALLENGE_DAYS):
@@ -29,31 +34,32 @@ async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     chat_id = context.bot_data.get("group_chat_id")
 
-    # Generate AI morning briefing (replaces static templates)
+    # Build yesterday's summary (used for AI prompt + recap image)
+    yesterday_summary = None
+    yesterday_dicts: list[dict] = []
+    if day > 1 and chat_id:
+        prev_checkins = await db.get_all_checkins_for_day(day - 1)
+        yesterday_dicts = [dict(c) for c in prev_checkins]
+        completed_names = [c["name"] for c in yesterday_dicts if is_all_complete(c)]
+        incomplete_list = [
+            (c["name"], get_missing_tasks(c))
+            for c in yesterday_dicts if not is_all_complete(c)
+        ]
+        completers = [c for c in yesterday_dicts if c.get("completed_at")]
+        completers.sort(key=lambda c: c["completed_at"])
+        first = completers[0]["name"] if completers else None
+        books = [(c["name"], c.get("book_title")) for c in yesterday_dicts if c.get("book_title")]
+
+        yesterday_summary = {
+            "day": day - 1,
+            "completed": completed_names,
+            "incomplete": incomplete_list,
+            "first_finisher": first,
+            "books": books,
+        }
+
+    # 1. AI greeting
     if chat_id:
-        yesterday_summary = None
-        if day > 1:
-            prev_checkins = await db.get_all_checkins_for_day(day - 1)
-            prev_dicts = [dict(c) for c in prev_checkins]
-            completed_names = [c["name"] for c in prev_dicts if is_all_complete(c)]
-            incomplete_list = [
-                (c["name"], get_missing_tasks(c))
-                for c in prev_dicts if not is_all_complete(c)
-            ]
-            # Find first finisher
-            completers = [c for c in prev_dicts if c.get("completed_at")]
-            completers.sort(key=lambda c: c["completed_at"])
-            first = completers[0]["name"] if completers else None
-            books = [(c["name"], c.get("book_title")) for c in prev_dicts if c.get("book_title")]
-
-            yesterday_summary = {
-                "day": day - 1,
-                "completed": completed_names,
-                "incomplete": incomplete_list,
-                "first_finisher": first,
-                "books": books,
-            }
-
         active_users = await db.get_active_users()
         all_users = await db.get_all_users()
         start = time_mod.monotonic()
@@ -71,6 +77,46 @@ async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             except Exception:
                 pass
 
+    # 2. Yesterday's recap image
+    if chat_id and yesterday_dicts:
+        try:
+            from bot.utils.image_generator import render_recap_image
+            yesterday_day = day - 1
+            complete = [c for c in yesterday_dicts if is_all_complete(c)]
+            recap_caption = (
+                f"Day {yesterday_day} recap — {len(complete)}/{len(yesterday_dicts)} done. "
+                f"Backfill until 12pm PT / 3pm ET."
+            )
+            recap_buf = render_recap_image(yesterday_day, yesterday_dicts, CHALLENGE_DAYS)
+            await context.bot.send_photo(chat_id=chat_id, photo=recap_buf, caption=recap_caption)
+        except Exception as e:
+            logger.warning("Yesterday recap image failed: %s", e)
+
+    # 3. Bookshelf image (if anyone read yesterday)
+    if chat_id and yesterday_dicts:
+        reads = [
+            c for c in yesterday_dicts
+            if c.get("reading_done") and c.get("book_title")
+        ]
+        if reads:
+            try:
+                from bot.utils.bookshelf import render_bookshelf
+                readers = []
+                for c in reads:
+                    cover_url = await db.get_current_book_cover(c["telegram_id"])
+                    readers.append({
+                        "name": c["name"],
+                        "book_title": c["book_title"],
+                        "takeaway": c.get("reading_takeaway", ""),
+                        "cover_url": cover_url,
+                    })
+                bookshelf_buf = await render_bookshelf(readers)
+                if bookshelf_buf:
+                    await context.bot.send_photo(chat_id=chat_id, photo=bookshelf_buf)
+            except Exception as e:
+                logger.warning("Bookshelf image failed: %s", e)
+
+    # 4. Today's daily card
     try:
         await post_daily_card(context)
         await db.log_event(None, None, "health_check_ok", f"day={day}")
@@ -78,7 +124,6 @@ async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         await db.log_event(None, None, "health_check_fail", f"day={day}", error=str(e))
         raise
 
-    # Post milestone message if applicable (separate message after the card)
     await post_milestone_if_needed(context, day)
 
 
@@ -141,15 +186,29 @@ async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     await db.log_event(None, None, "ai_recap", f"day={day} complete={len(complete)}/{len(checkins)}")
 
 
-async def nudge_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """11 PM ET -- DM users with incomplete tasks."""
+async def _nudge_for_tz(context: ContextTypes.DEFAULT_TYPE, tz_label: str) -> None:
+    """Send same-day DM nudge to users whose USER_TIMEZONES entry matches tz_label.
+
+    tz_label is "US/Eastern" or "US/Pacific". Fires at 10pm in that zone.
+    Uses card-based day so the nudge always references the open challenge day,
+    even when 10pm PT crosses calendar midnight ET.
+    """
+    from bot.config import USER_TIMEZONES
+    from bot.utils.progress import get_current_challenge_day
+
     db = context.bot_data["db"]
-    day = max(get_day_number(CHALLENGE_START_DATE, today_et()), 1)
-    if day > CHALLENGE_DAYS:
+    day = await get_current_challenge_day(db)
+    if day < 1 or day > CHALLENGE_DAYS:
+        return
+
+    target_names = {n for n, tz in USER_TIMEZONES.items() if tz == tz_label}
+    if not target_names:
         return
 
     checkins = await db.get_all_checkins_for_day(day)
     for c in checkins:
+        if c["name"] not in target_names:
+            continue
         if is_all_complete(c):
             continue
         missing = get_missing_tasks(c)
@@ -158,7 +217,7 @@ async def nudge_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             continue
         missing_list = "\n".join(f"  - {m}" for m in missing)
         text = (
-            f"Hey {user['name']} -- you have unchecked tasks for today:\n\n"
+            f"Hey {user['name']} -- you have unchecked tasks for day {day}:\n\n"
             f"{missing_list}\n\n"
             "If you've done them, log them now.\n"
             "You can also backfill until 12pm PT / 3pm ET tomorrow."
@@ -167,6 +226,16 @@ async def nudge_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             await context.bot.send_message(chat_id=c["telegram_id"], text=text)
         except Exception:
             pass
+
+
+async def nudge_job_et(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """10 PM ET -- DM nudge for east-coast users."""
+    await _nudge_for_tz(context, "US/Eastern")
+
+
+async def nudge_job_pt(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """10 PM PT -- DM nudge for west-coast users."""
+    await _nudge_for_tz(context, "US/Pacific")
 
 
 async def _gather_weekly_data(db, current_day: int) -> dict:
@@ -388,7 +457,7 @@ async def weekly_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def morning_after_reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """9 AM PT -- Remind users about yesterday's incomplete tasks."""
+    """9 AM ET -- Remind users about yesterday's incomplete tasks (gives 6h to lock)."""
     db = context.bot_data["db"]
     from bot.utils.progress import get_current_challenge_day
     day = await get_current_challenge_day(db)
@@ -461,22 +530,31 @@ async def daily_backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 def schedule_jobs(job_queue) -> None:
     """Register all daily scheduled jobs.
 
-    Mixed timezones by design (Bryan, 2026-04-16):
-      - Card and final-nudge anchored in ET (early-morning posters, EST nudge time)
-      - Reminder, cutoff, and scoreboard anchored in PT (give west coast a fair window)
+    Schedule (Bryan, 2026-04-16):
+      7am  ET            morning card (greeting + yesterday recap + bookshelf + today)
+      9am  ET            DM reminder for users with incomplete yesterday tasks
+      12pm PT (3pm ET)   yesterday locks; admin warnings for incompletes
+      10pm ET            same-day DM nudge for east-coast users
+      10pm PT (1am ET)   same-day DM nudge for west-coast users
+      8pm  ET Sunday     weekly digest
+      3am  ET            db backup
+
+    Standalone evening scoreboard removed — folded into morning card.
     """
     job_queue.run_daily(
         morning_card_job, time=time(7, 0, tzinfo=ET), name="morning_card"
     )
     job_queue.run_daily(
-        morning_after_reminder_job, time=time(9, 0, tzinfo=PT), name="morning_after_reminder"
+        morning_after_reminder_job, time=time(9, 0, tzinfo=ET), name="morning_after_reminder"
     )
     job_queue.run_daily(
         noon_cutoff_job, time=time(12, 0, tzinfo=PT), name="noon_cutoff"
     )
-    job_queue.run_daily(nudge_job, time=time(23, 0, tzinfo=ET), name="nudge")
     job_queue.run_daily(
-        evening_scoreboard_job, time=time(22, 0, tzinfo=PT), name="evening_scoreboard"
+        nudge_job_et, time=time(22, 0, tzinfo=ET), name="nudge_et"
+    )
+    job_queue.run_daily(
+        nudge_job_pt, time=time(22, 0, tzinfo=PT), name="nudge_pt"
     )
     job_queue.run_daily(
         weekly_digest_job, time=time(20, 0, tzinfo=ET), name="weekly_digest"
