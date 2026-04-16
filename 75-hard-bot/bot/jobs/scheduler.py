@@ -17,6 +17,7 @@ from bot.utils.progress import today_et, get_day_number, get_missing_tasks, is_a
 logger = logging.getLogger(__name__)
 
 ET = pytz.timezone("US/Eastern")
+PT = pytz.timezone("US/Pacific")
 
 
 async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -82,14 +83,19 @@ async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """10 PM ET -- Post wrap-up summary."""
+    """10 PM PT (= 1 AM ET next day) -- Wrap-up for the day that just ended in PT.
+
+    Uses the latest card's day so the recap correctly summarizes Day N
+    even though it fires after midnight ET (when calendar day = N+1).
+    """
     db = context.bot_data["db"]
     chat_id = context.bot_data.get("group_chat_id")
     if not chat_id:
         return
 
-    day = max(get_day_number(CHALLENGE_START_DATE, today_et()), 1)
-    if day > CHALLENGE_DAYS:
+    from bot.utils.progress import get_current_challenge_day
+    day = await get_current_challenge_day(db)
+    if day < 1 or day > CHALLENGE_DAYS:
         return
 
     checkins_raw = await db.get_all_checkins_for_day(day)
@@ -155,7 +161,7 @@ async def nudge_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             f"Hey {user['name']} -- you have unchecked tasks for today:\n\n"
             f"{missing_list}\n\n"
             "If you've done them, log them now.\n"
-            "You can also backfill until noon tomorrow."
+            "You can also backfill until 12pm PT / 3pm ET tomorrow."
         )
         try:
             await context.bot.send_message(chat_id=c["telegram_id"], text=text)
@@ -382,7 +388,7 @@ async def weekly_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def morning_after_reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """9 AM ET -- Remind users about yesterday's incomplete tasks."""
+    """9 AM PT -- Remind users about yesterday's incomplete tasks."""
     db = context.bot_data["db"]
     from bot.utils.progress import get_current_challenge_day
     day = await get_current_challenge_day(db)
@@ -407,7 +413,7 @@ async def morning_after_reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None
                 text=(
                     f"hey -- you still have incomplete tasks from yesterday (day {yesterday}):\n\n"
                     f"{missing_list}\n\n"
-                    f"log them now if you did them. you have until noon ET."
+                    f"log them now if you did them. you have until 12pm PT / 3pm ET."
                 ),
             )
         except Exception:
@@ -415,7 +421,7 @@ async def morning_after_reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def noon_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """12 PM ET -- Lock previous day, flag incomplete users to admin."""
+    """12 PM PT -- Lock previous day, flag incomplete users to admin."""
     day = get_day_number(CHALLENGE_START_DATE, today_et())
     yesterday = day - 1
     if yesterday < 1:
@@ -453,19 +459,24 @@ async def daily_backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def schedule_jobs(job_queue) -> None:
-    """Register all daily scheduled jobs."""
+    """Register all daily scheduled jobs.
+
+    Mixed timezones by design (Bryan, 2026-04-16):
+      - Card and final-nudge anchored in ET (early-morning posters, EST nudge time)
+      - Reminder, cutoff, and scoreboard anchored in PT (give west coast a fair window)
+    """
     job_queue.run_daily(
         morning_card_job, time=time(7, 0, tzinfo=ET), name="morning_card"
     )
     job_queue.run_daily(
-        evening_scoreboard_job, time=time(22, 0, tzinfo=ET), name="evening_scoreboard"
+        morning_after_reminder_job, time=time(9, 0, tzinfo=PT), name="morning_after_reminder"
+    )
+    job_queue.run_daily(
+        noon_cutoff_job, time=time(12, 0, tzinfo=PT), name="noon_cutoff"
     )
     job_queue.run_daily(nudge_job, time=time(23, 0, tzinfo=ET), name="nudge")
     job_queue.run_daily(
-        morning_after_reminder_job, time=time(9, 0, tzinfo=ET), name="morning_after_reminder"
-    )
-    job_queue.run_daily(
-        noon_cutoff_job, time=time(12, 0, tzinfo=ET), name="noon_cutoff"
+        evening_scoreboard_job, time=time(22, 0, tzinfo=PT), name="evening_scoreboard"
     )
     job_queue.run_daily(
         weekly_digest_job, time=time(20, 0, tzinfo=ET), name="weekly_digest"

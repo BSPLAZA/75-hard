@@ -855,6 +855,87 @@ async def admin_reset_db_command(
     await _admin_reply(update, context, "Database reset. Backup saved. User registrations preserved.")
 
 
+async def admin_conversations_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Dump recent DM conversations with Luke for review.
+
+    Usage:
+      /admin_conversations           — last 20 across all users
+      /admin_conversations 50        — last 50 across all users
+      /admin_conversations <name>    — last 20 for one user
+      /admin_conversations <name> 50 — last 50 for one user
+    """
+    if not _is_admin(update.effective_user.id):
+        await _admin_reply(update, context, "Admin only.")
+        return
+
+    db = context.bot_data["db"]
+
+    # Parse args: name (optional, multi-word) and trailing limit (optional)
+    args = list(context.args)
+    limit = 20
+    if args and args[-1].isdigit():
+        limit = max(1, min(int(args.pop()), 100))
+    name = " ".join(args).strip()
+
+    target_id: int | None = None
+    if name:
+        user = await db.get_user_by_name(name)
+        if not user:
+            await _admin_reply(update, context, f"No user named '{name}' found.")
+            return
+        target_id = user["telegram_id"]
+
+    rows = await db.get_recent_conversations(limit=limit, telegram_id=target_id)
+    if not rows:
+        await _admin_reply(update, context, "No conversations logged yet.")
+        return
+
+    header = (
+        f"Last {len(rows)} convo(s)"
+        + (f" for {name}" if name else "")
+        + ":\n\n"
+    )
+
+    # Build chunks under Telegram's 4096-char limit. Newest is first in rows.
+    def _trunc(s: str | None, n: int) -> str:
+        if not s:
+            return ""
+        s = s.replace("\n", " ").strip()
+        return s if len(s) <= n else s[: n - 1] + "…"
+
+    blocks: list[str] = []
+    for r in rows:
+        ts = (r["timestamp"] or "")[:19].replace("T", " ")
+        who = r["user_name"] or str(r["telegram_id"])
+        tools = r["tools_called"] or ""
+        block = (
+            f"[{ts}] {who}\n"
+            f"  U: {_trunc(r['user_message'], 200)}\n"
+            f"  L: {_trunc(r['luke_response'], 250)}"
+        )
+        if tools and tools != "null":
+            block += f"\n  tools: {_trunc(tools, 120)}"
+        blocks.append(block)
+
+    # Page into ≤4000-char messages
+    LIMIT = 4000
+    pages: list[str] = []
+    current = header
+    for b in blocks:
+        if len(current) + len(b) + 2 > LIMIT:
+            pages.append(current.rstrip())
+            current = ""
+        current += b + "\n\n"
+    if current.strip():
+        pages.append(current.rstrip())
+
+    for i, page in enumerate(pages, 1):
+        prefix = f"({i}/{len(pages)}) " if len(pages) > 1 else ""
+        await _admin_reply(update, context, prefix + page)
+
+
 def get_admin_handlers() -> list:
     """Return all admin command handlers."""
     return [
@@ -873,6 +954,7 @@ def get_admin_handlers() -> list:
         CommandHandler("admin_confirm_payment", admin_confirm_payment_command),
         CommandHandler("admin_eliminate", admin_eliminate_command),
         CommandHandler("admin_test_transform", admin_test_transform_command),
+        CommandHandler("admin_conversations", admin_conversations_command),
     ]
 
 

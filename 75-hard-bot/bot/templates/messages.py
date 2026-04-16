@@ -90,7 +90,7 @@ Q: What if I work out after midnight?
 A: Log it for the day you're in. If it's 1 AM Tuesday, it counts for Tuesday.
 
 Q: What if I forget to log something?
-A: You can backfill until noon the next day. I'll remind you at 11 PM if you have unchecked tasks.
+A: You can backfill until 12pm PT / 3pm ET the next day. I'll remind you at 11pm ET / 8pm PT if you still have unchecked tasks.
 
 Q: What counts as a "cup" of water?
 A: 8 oz / ~250 ml. A gallon = 16 cups = 128 oz.

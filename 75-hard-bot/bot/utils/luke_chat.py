@@ -55,7 +55,7 @@ WHAT YOU CAN DO:
 - Log feedback, bugs, suggestions
 - Generate transformation photos and timelapses
 - Give honest assessments of how someone or the group is doing
-- Backfill yesterday's tasks before noon ET (use backfill_task). If someone says they forgot to log a workout, water, reading, or diet from yesterday, help them backfill it. Only works before noon ET the next day.
+- Backfill yesterday's tasks before noon PT (use backfill_task). If someone says they forgot to log a workout, water, reading, or diet from yesterday, help them backfill it. Only works before noon PT the next day.
 
 WHAT YOU CAN'T DO:
 - Mark tasks as complete (people do that via the daily card)
@@ -192,7 +192,7 @@ TOOLS = [
     },
     {
         "name": "backfill_task",
-        "description": "Log a task for YESTERDAY that the user forgot. Only works before noon ET. Use when user says they forgot to log something from yesterday.",
+        "description": "Log a task for YESTERDAY that the user forgot. Only works before noon PT. Use when user says they forgot to log something from yesterday.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -434,12 +434,12 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
 
     elif tool_name == "backfill_task":
         import pytz as _pytz
-        _ET = _pytz.timezone("US/Eastern")
-        now_et = datetime.now(_ET)
+        _PT = _pytz.timezone("US/Pacific")
+        now_pt = datetime.now(_PT)
 
-        # Only allow backfill before noon ET
-        if now_et.hour >= 12:
-            return "DENIED: It's past noon ET. Yesterday's tasks are locked in. Backfill window closed."
+        # Only allow backfill before noon PT (matches noon_cutoff_job)
+        if now_pt.hour >= 12:
+            return "DENIED: It's past 12pm PT / 3pm ET. Yesterday's tasks are locked in. Backfill window closed."
 
         yesterday = day - 1
         if yesterday < 1:
@@ -448,7 +448,7 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
         # Ensure checkin exists for yesterday
         checkin = await db.get_checkin(user_id, yesterday)
         if not checkin:
-            yesterday_date = (now_et.date() - timedelta(days=1)).isoformat()
+            yesterday_date = (now_pt.date() - timedelta(days=1)).isoformat()
             await db.create_checkin(user_id, yesterday, yesterday_date)
 
         task = tool_input["task"]
@@ -569,11 +569,13 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
         # Process tool calls (may need multiple rounds)
         cover_url = None
         media = None
+        tools_called: list[str] = []
         context_data = {"refresh_card": False, "refresh_days": set()}
         while response.stop_reason == "tool_use":
             tool_results = []
             for block in response.content:
                 if block.type == "tool_use":
+                    tools_called.append(block.name)
                     result = await _execute_tool(block.name, block.input, db, user_id)
                     tool_results.append({
                         "type": "tool_result",
@@ -627,6 +629,21 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
         if text:
             _add_to_history(user_id, "assistant", text)
 
+        # Persist the exchange for later review and improvement
+        try:
+            user = await db.get_user(user_id)
+            user_name = dict(user)["name"] if user else None
+        except Exception:
+            user_name = None
+        await db.add_conversation_log(
+            telegram_id=user_id,
+            user_name=user_name,
+            source="dm",
+            user_message=message,
+            luke_response=text,
+            tools_called=json.dumps(tools_called) if tools_called else None,
+        )
+
         return {
             "text": text,
             "cover_url": cover_url,
@@ -638,4 +655,16 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
     except Exception as e:
         logger.error("Luke chat failed: %s", e)
         await db.log_event(user_id, None, "ai_chat", error=str(e))
+        # Log the failed exchange too so we can spot patterns of breakage
+        try:
+            await db.add_conversation_log(
+                telegram_id=user_id,
+                user_name=None,
+                source="dm",
+                user_message=message,
+                luke_response=f"[ERROR] {e}",
+                tools_called=None,
+            )
+        except Exception:
+            pass
         return {"text": "something went wrong. try a /command instead", "cover_url": None, "media": None, "refresh_card": False}

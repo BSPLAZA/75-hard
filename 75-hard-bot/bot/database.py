@@ -107,6 +107,17 @@ class Database:
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS conversation_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+                telegram_id INTEGER NOT NULL,
+                user_name TEXT,
+                source TEXT NOT NULL,
+                user_message TEXT,
+                luke_response TEXT,
+                tools_called TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS event_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -151,6 +162,49 @@ class Database:
             (key, value),
         )
         await self._conn.commit()
+
+    # ── conversation log ──────────────────────────────────────────────
+
+    async def add_conversation_log(
+        self,
+        telegram_id: int,
+        user_name: str | None,
+        source: str,
+        user_message: str,
+        luke_response: str,
+        tools_called: str | None = None,
+    ) -> None:
+        """Save a DM exchange with Luke. Fire-and-forget — never raises."""
+        try:
+            await self._conn.execute(
+                """
+                INSERT INTO conversation_log
+                    (telegram_id, user_name, source, user_message, luke_response, tools_called)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (telegram_id, user_name, source, user_message, luke_response, tools_called),
+            )
+            await self._conn.commit()
+        except Exception:
+            pass
+
+    async def get_recent_conversations(
+        self,
+        limit: int = 50,
+        telegram_id: int | None = None,
+    ) -> list[aiosqlite.Row]:
+        """Return recent DM exchanges, newest first. Optionally filter to one user."""
+        if telegram_id is not None:
+            query = (
+                "SELECT * FROM conversation_log WHERE telegram_id = ? "
+                "ORDER BY id DESC LIMIT ?"
+            )
+            params: tuple = (telegram_id, limit)
+        else:
+            query = "SELECT * FROM conversation_log ORDER BY id DESC LIMIT ?"
+            params = (limit,)
+        async with self._conn.execute(query, params) as cur:
+            return await cur.fetchall()
 
     # ── users ──────────────────────────────────────────────────────────
 
