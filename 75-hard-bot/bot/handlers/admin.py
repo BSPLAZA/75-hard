@@ -204,12 +204,21 @@ async def admin_resolve_command(
 async def admin_announce_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Post a message to the group as the bot."""
+    """Post a message to the group as the bot, preserving newlines/formatting.
+
+    Usage: /admin_announce <message body, multi-line OK>
+    """
     if not _is_admin(update.effective_user.id):
         await _admin_reply(update, context, "Admin only.")
         return
 
-    if not context.args:
+    # Use raw text (preserves newlines), not context.args (whitespace-split)
+    raw = update.message.text or ""
+    # Strip the command word itself ("/admin_announce" or "/admin_announce@bot")
+    parts = raw.split(maxsplit=1)
+    body = parts[1].strip() if len(parts) == 2 else ""
+
+    if not body:
         await _admin_reply(update, context, "Usage: /admin_announce <message>")
         return
 
@@ -218,8 +227,7 @@ async def admin_announce_command(
         await _admin_reply(update, context, "Group chat ID not configured.")
         return
 
-    message = " ".join(context.args)
-    await context.bot.send_message(chat_id=group_chat_id, text=message)
+    await context.bot.send_message(chat_id=group_chat_id, text=body)
     await _admin_reply(update, context, "Announcement sent.")
 
 
