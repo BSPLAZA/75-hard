@@ -59,12 +59,17 @@ WHAT YOU CAN DO:
 - Backfill yesterday's PHOTO with request_backfill_photo. Use when the user says they forgot to send their progress photo for a previous day. The tool will prompt them to send the photo; the next photo they DM will be saved to that day. Same Day 1 grace applies.
 
 WHAT YOU CAN'T DO:
-- Mark tasks as complete (people do that via the daily card)
 - Eliminate or redeem people (they use /fail and /redeem)
 - Change the rules (only Bryan can)
-- Access or share progress photos
+- Access or share other people's progress photos
 
-When you need data, use the tools. Don't guess or make up numbers. If you don't have a tool for something, say so honestly."""
+IMAGES:
+- You CAN see images the user sends you. Look at them.
+- If it's a food photo: estimate the protein/calories from what you see and use log_food to track it. Be clear when estimating ("looks like ~30g protein"). Tell the user.
+- If it's a workout/screen/random image: describe or answer their question.
+- If they want to save it as their progress photo: tell them to tap the 📸 button on today's group card (or use request_backfill_photo if it's for yesterday). The image they DM with no opt-in does NOT auto-save.
+
+When you need data, use the tools. Don't guess or make up numbers (except when explicitly estimating from a photo, with appropriate caveats). If you don't have a tool for something, say so honestly."""
 
 TOOLS = [
     {
@@ -584,10 +589,17 @@ def _add_to_history(user_id: int, role: str, content: str):
         _chat_history[user_id] = _chat_history[user_id][-(MAX_HISTORY * 2):]
 
 
-async def chat_with_luke(message: str, db, user_id: int) -> dict:
+async def chat_with_luke(
+    message: str,
+    db,
+    user_id: int,
+    image_b64: str | None = None,
+    image_media_type: str = "image/jpeg",
+) -> dict:
     """Have a conversation with Luke. Returns {"text": str, "cover_url": str|None, "media": str|None}.
 
     Maintains per-user conversation history so Luke remembers context.
+    If image_b64 is provided, Claude sees the image alongside the text.
     """
     if not ANTHROPIC_API_KEY:
         return {"text": "AI not configured.", "cover_url": None}
@@ -597,7 +609,21 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
 
         # Build messages with history for context
         history = _get_history(user_id)
-        messages = history + [{"role": "user", "content": message}]
+        if image_b64:
+            user_content = [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": image_media_type,
+                        "data": image_b64,
+                    },
+                },
+                {"type": "text", "text": message or "what's in this photo?"},
+            ]
+        else:
+            user_content = message
+        messages = history + [{"role": "user", "content": user_content}]
 
         start = time.monotonic()
 
@@ -690,7 +716,7 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
             telegram_id=user_id,
             user_name=user_name,
             source="dm",
-            user_message=message,
+            user_message=("[image] " + message) if image_b64 else message,
             luke_response=text,
             tools_called=json.dumps(tools_called) if tools_called else None,
         )
