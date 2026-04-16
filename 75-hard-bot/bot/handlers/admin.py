@@ -13,7 +13,7 @@ from telegram.ext import (
 
 from bot.config import ADMIN_USER_ID, CHALLENGE_START_DATE
 from bot.handlers.daily_card import post_daily_card, refresh_card
-from bot.jobs.scheduler import evening_scoreboard_job, nudge_job_et, nudge_job_pt, weekly_digest_job
+from bot.jobs.scheduler import nudge_job_et, nudge_job_pt
 from bot.templates.messages import FAIL_CONFIRM, FAIL_DONE
 from bot.utils.progress import today_et, get_day_number, get_current_challenge_day
 

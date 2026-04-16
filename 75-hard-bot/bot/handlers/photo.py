@@ -3,7 +3,6 @@
 from datetime import date
 
 from telegram import Update
-from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from bot.config import CB_PHOTO, CHALLENGE_START_DATE

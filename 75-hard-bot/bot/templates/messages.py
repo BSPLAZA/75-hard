@@ -40,7 +40,6 @@ PHOTO_ASK = "Send me your progress photo for Day {day}."
 PHOTO_SAVED = "Day {day} photo saved! 📸"
 PHOTO_UPDATED = "Day {day} photo updated! 📸"
 PHOTO_NOT_REGISTERED = "I can't DM you yet! Tap t.me/{bot_username}?start=register to start a chat with me first."
-PHOTO_GROUP_NOTIFY = "📸 {name} checked in ({count}/{total} today)"
 PHOTO_NEED_PHOTO = "I need a photo, not a file! Send me a picture."
 
 # Diet
@@ -77,55 +76,58 @@ Every day for 75 days. Miss one task, you're out.
 4. 📖  Read 10 pages of non-fiction
 5. 📸  Take a progress photo
 
-━━━ HOW TO USE THE BOT ━━━
-Each morning I post a daily card with buttons:
-  💧 Water +1  — tap each time you drink a cup
-  🏋️ Workout   — tap to log type + indoor/outdoor
-  📖 Read       — tap and I'll DM you for book + takeaway
-  📸 Photo      — tap and send your photo in DMs
-  🍽️ Diet       — tap to confirm you followed your diet
+━━━ HOW TO LOG ━━━
+Two ways. Use whichever's faster.
+
+1) The daily card buttons (in this group):
+   💧 Water +1   🏋️ Workout   📖 Read   📸 Photo   🍽️ Diet
+
+2) DM me in plain English (@lockedinlukebot):
+   "ran 3 miles outside"        → workout logged
+   "had 4 cups of water"        → water +4
+   "stayed on diet today"       → diet confirmed
+   "ate chicken & rice, 40g protein" → tracks vs your diet goal
+   "fix my water to 8"          → corrects mistakes
+   "undo that workout"          → undo
+   "I forgot reading yesterday" → backfill (until 12pm PT / 3pm ET)
+   "how am i doing"             → status check
+   "show my transformation"     → before/after image
+
+━━━ DAILY RHYTHM (all times shown ET / PT) ━━━
+  7am ET / 4am PT  — new card + yesterday recap image
+  9am ET / 6am PT  — DM if yesterday's incomplete
+  3pm ET / 12pm PT — yesterday LOCKS (no more backfill)
+  10pm ET — final nudge for east-coast users
+  10pm PT — final nudge for west-coast users
 
 ━━━ FAQ ━━━
 Q: What if I work out after midnight?
 A: Log it for the day you're in. If it's 1 AM Tuesday, it counts for Tuesday.
 
 Q: What if I forget to log something?
-A: You can backfill until 12pm PT / 3pm ET the next day. I'll remind you at 11pm ET / 8pm PT if you still have unchecked tasks.
+A: You can backfill until 12pm PT / 3pm ET the next day. DM me what you forgot.
 
 Q: What counts as a "cup" of water?
 A: 8 oz / ~250 ml. A gallon = 16 cups = 128 oz.
 
 Q: Can I change my diet mid-challenge?
-A: Yes. The rule is "follow A diet." Whatever you commit to, follow it. No alcohol and no cheat meals are non-negotiable.
+A: The rule is "follow A diet." Once you commit, you stick with it. No alcohol and no cheat meals are non-negotiable. I'll push back on weak reasons.
 
 Q: What if I fail?
-A: DM me /fail. You'll get $1 back for each day completed. The rest stays in the prize pool. You stay in the group to cheer everyone on.
+A: DM me /fail. You'll get $1 back for each day completed. You can also /redeem once — pay remaining days + $50 to rejoin.
 
-Q: I tapped water too many times. How do I fix it?
-A: Type /water set [number] to correct your cup count.
+Q: I have an idea or found a bug.
+A: /suggest [idea] or /bug [what happened] — both go straight to Bryan.
 
-Q: I logged the wrong workout. How do I fix it?
-A: Type /workout_undo to clear your last workout, then re-log it.
-
-Q: Can I see my stats?
-A: DM me /stats for your personal progress breakdown.
-
-Q: I have an idea to make this bot better.
-A: Type /suggest [your idea] and Bryan will see it.
-
-Q: Something is broken.
-A: Type /bug [what happened] and Bryan will fix it.
-
-Q: Where is today's card? I can't find it.
-A: Type /card and I'll link you to it. It's also pinned.
+Q: Where is today's card?
+A: Type /card and I'll link you to it. It's also pinned each day.
 
 Q: What if the bot goes down?
 A: Bryan will fix it. Log your tasks when it's back up. Honor system in the meantime.
 
 ━━━ STAKES ━━━
-💰 $75 buy-in · $375 total prize pool
-Winners split the pot from those who didn't make it.
+💰 $75 buy-in · prize pool grows when people fail
 If everyone finishes — everyone gets their $75 back. Respect.
 
-━━━ START DATE ━━━
+━━━ DATES ━━━
 April 15, 2026 → June 28, 2026"""

@@ -36,7 +36,7 @@ Examples:
 
 day 7. one week and everyone's still here
 
-yesterday 3/5 finished everything. kat was first done for the third time this week. yumna and gaurav both missed their photos
+yesterday 2/4 finished everything. kat was first done for the third time this week. yumna and gaurav both missed their photos
 
 most people quit in week one. today's about proving that's not us
 

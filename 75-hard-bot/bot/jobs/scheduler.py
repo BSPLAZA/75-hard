@@ -127,65 +127,6 @@ async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     await post_milestone_if_needed(context, day)
 
 
-async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """10 PM PT (= 1 AM ET next day) -- Wrap-up for the day that just ended in PT.
-
-    Uses the latest card's day so the recap correctly summarizes Day N
-    even though it fires after midnight ET (when calendar day = N+1).
-    """
-    db = context.bot_data["db"]
-    chat_id = context.bot_data.get("group_chat_id")
-    if not chat_id:
-        return
-
-    from bot.utils.progress import get_current_challenge_day
-    day = await get_current_challenge_day(db)
-    if day < 1 or day > CHALLENGE_DAYS:
-        return
-
-    checkins_raw = await db.get_all_checkins_for_day(day)
-    active_users = await db.get_active_users()
-    if not checkins_raw:
-        return
-
-    # Convert to dicts immediately
-    checkins = [dict(c) for c in checkins_raw]
-    complete = [c for c in checkins if is_all_complete(c)]
-    remaining = CHALLENGE_DAYS - day
-
-    from bot.utils.image_generator import render_recap_image
-    image_buf = render_recap_image(day, checkins, CHALLENGE_DAYS)
-
-    caption = f"{len(complete)}/{len(checkins)} completed · {remaining} days to go"
-
-    await context.bot.send_photo(chat_id=chat_id, photo=image_buf, caption=caption)
-
-    # Send bookshelf image if anyone read today
-    reads = [
-        c for c in checkins
-        if c.get("reading_done") and c.get("book_title")
-    ]
-    if reads:
-        from bot.utils.bookshelf import render_bookshelf
-
-        # Get cover URLs for each reader
-        readers = []
-        for c in reads:
-            cover_url = await db.get_current_book_cover(c["telegram_id"])
-            readers.append({
-                "name": c["name"],
-                "book_title": c["book_title"],
-                "takeaway": c.get("reading_takeaway", ""),
-                "cover_url": cover_url,
-            })
-
-        bookshelf_buf = await render_bookshelf(readers)
-        if bookshelf_buf:
-            await context.bot.send_photo(chat_id=chat_id, photo=bookshelf_buf)
-
-    await db.log_event(None, None, "ai_recap", f"day={day} complete={len(complete)}/{len(checkins)}")
-
-
 async def _nudge_for_tz(context: ContextTypes.DEFAULT_TYPE, tz_label: str) -> None:
     """Send same-day DM nudge to users whose USER_TIMEZONES entry matches tz_label.
 
