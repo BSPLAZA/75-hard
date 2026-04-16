@@ -124,8 +124,12 @@ async def admin_reset_day_command(
         )
         return
 
-    await post_daily_card(context, chat_id=group_chat_id)
-    await _admin_reply(update, context, "Daily card reposted.")
+    # Use card-based day to prevent accidentally advancing to the next day
+    from bot.utils.progress import get_current_challenge_day
+    db = context.bot_data["db"]
+    current_day = await get_current_challenge_day(db)
+    await post_daily_card(context, chat_id=group_chat_id, force_day=current_day)
+    await _admin_reply(update, context, f"Day {current_day} card reposted.")
 
 
 async def admin_feedback_command(
