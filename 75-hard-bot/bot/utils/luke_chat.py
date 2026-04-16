@@ -8,7 +8,7 @@ from datetime import date
 import anthropic
 
 from bot.config import ANTHROPIC_API_KEY, CHALLENGE_START_DATE
-from bot.utils.progress import today_et, get_day_number, is_all_complete, get_missing_tasks
+from bot.utils.progress import today_et, get_day_number, get_current_challenge_day, is_all_complete, get_missing_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +218,7 @@ TOOLS = [
 
 async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> str:
     """Execute a tool call and return the result as a string."""
-    day = max(get_day_number(CHALLENGE_START_DATE, today_et()), 1)
+    day = await get_current_challenge_day(db)
 
     if tool_name == "get_my_status":
         checkin = await db.get_checkin(user_id, day)
@@ -449,10 +449,28 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
     return "Unknown tool."
 
 
+# Per-user conversation history (in-memory, survives within a bot session)
+_chat_history: dict[int, list[dict]] = {}
+MAX_HISTORY = 10  # messages per user
+
+
+def _get_history(user_id: int) -> list[dict]:
+    return _chat_history.get(user_id, [])
+
+
+def _add_to_history(user_id: int, role: str, content: str):
+    if user_id not in _chat_history:
+        _chat_history[user_id] = []
+    _chat_history[user_id].append({"role": role, "content": content})
+    # Keep only last MAX_HISTORY exchanges
+    if len(_chat_history[user_id]) > MAX_HISTORY * 2:
+        _chat_history[user_id] = _chat_history[user_id][-(MAX_HISTORY * 2):]
+
+
 async def chat_with_luke(message: str, db, user_id: int) -> dict:
     """Have a conversation with Luke. Returns {"text": str, "cover_url": str|None, "media": str|None}.
 
-    media can be "transformation" or "timelapse" — caller handles generating and sending the actual media.
+    Maintains per-user conversation history so Luke remembers context.
     """
     if not ANTHROPIC_API_KEY:
         return {"text": "AI not configured.", "cover_url": None}
@@ -460,7 +478,9 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-        messages = [{"role": "user", "content": message}]
+        # Build messages with history for context
+        history = _get_history(user_id)
+        messages = history + [{"role": "user", "content": message}]
 
         start = time.monotonic()
 
@@ -521,6 +541,11 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
 
         latency_ms = int((time.monotonic() - start) * 1000)
         await db.log_event(user_id, None, "ai_chat", f"msg_len={len(message)}", latency_ms=latency_ms)
+
+        # Save to conversation history
+        _add_to_history(user_id, "user", message)
+        if text:
+            _add_to_history(user_id, "assistant", text)
 
         return {"text": text, "cover_url": cover_url, "media": media, "refresh_card": context_data["refresh_card"]}
 

@@ -17,7 +17,7 @@ def water_bar(cups: int) -> str:
 
 
 def today_et() -> date:
-    """Return today's date in Eastern Time (not UTC)."""
+    """Return today's date in Eastern Time."""
     return datetime.now(ET).date()
 
 
@@ -37,6 +37,26 @@ def is_all_complete(checkin: dict) -> bool:
         and checkin["diet_done"] and checkin["reading_done"]
         and checkin["photo_done"]
     )
+
+
+async def get_current_challenge_day(db) -> int:
+    """Get the current challenge day based on the latest card posted.
+
+    The day doesn't advance until the morning card drops at 7 AM ET.
+    This means PST and EST users are always on the same day —
+    no timezone confusion.
+    """
+    try:
+        async with db._conn.execute(
+            "SELECT day_number FROM daily_cards ORDER BY day_number DESC LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+        if row:
+            return row["day_number"]
+    except Exception:
+        pass
+    # Fallback if no cards exist yet
+    return max(get_day_number(CHALLENGE_START_DATE, today_et()), 1)
 
 
 def get_missing_tasks(checkin: dict) -> list[str]:
