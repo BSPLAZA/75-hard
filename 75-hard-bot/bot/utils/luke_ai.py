@@ -105,7 +105,7 @@ async def generate_morning_message(
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-opus-4-7",
             max_tokens=120,
             system=LUKE_SYSTEM_PROMPT,
             messages=[
@@ -186,7 +186,7 @@ async def generate_weekly_reflection(
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-opus-4-7",
             max_tokens=200,
             system=WEEKLY_REFLECTION_SYSTEM,
             messages=[
@@ -221,7 +221,7 @@ async def generate_recap_caption(
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-opus-4-7",
             max_tokens=60,
             system="You're Luke, a bot in a group chat. Write ONE short sentence reacting to today's results. Text style, no em dashes, no motivational cliches.",
             messages=[{"role": "user", "content": context}],
