@@ -17,7 +17,7 @@ from bot.config import (
 )
 from bot.templates.messages import CARD_EXPIRED
 from bot.utils.card_renderer import render_card
-from bot.utils.progress import get_day_number
+from bot.utils.progress import today_et, get_day_number
 
 
 def build_card_keyboard() -> InlineKeyboardMarkup:
@@ -52,7 +52,7 @@ async def post_daily_card(
     if not chat_id:
         return
 
-    today = date.today()
+    today = today_et()
     day_number = force_day or get_day_number(CHALLENGE_START_DATE, today)
     if day_number < 1:
         day_number = 1  # Allow preview card before challenge starts
@@ -150,7 +150,7 @@ async def refresh_card(
 async def card_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/card -- reply with a link to today's card or re-post if missing."""
     db = context.bot_data["db"]
-    today = date.today()
+    today = today_et()
     day_number = get_day_number(CHALLENGE_START_DATE, today)
 
     if day_number < 1:

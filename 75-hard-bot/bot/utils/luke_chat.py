@@ -8,7 +8,7 @@ from datetime import date
 import anthropic
 
 from bot.config import ANTHROPIC_API_KEY, CHALLENGE_START_DATE
-from bot.utils.progress import get_day_number, is_all_complete, get_missing_tasks
+from bot.utils.progress import today_et, get_day_number, is_all_complete, get_missing_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +218,7 @@ TOOLS = [
 
 async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> str:
     """Execute a tool call and return the result as a string."""
-    day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+    day = max(get_day_number(CHALLENGE_START_DATE, today_et()), 1)
 
     if tool_name == "get_my_status":
         checkin = await db.get_checkin(user_id, day)
@@ -365,7 +365,7 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
         wtype = tool_input.get("workout_type", "workout")
         checkin = await db.get_checkin(user_id, day)
         if not checkin:
-            await db.create_checkin(user_id, day, date.today().isoformat())
+            await db.create_checkin(user_id, day, today_et().isoformat())
         slot, just_completed = await db.log_workout(user_id, day, wtype, location)
         return f"REFRESH_CARD: Workout logged — {location} {wtype}, slot {slot}/2. {'Both done!' if slot == 2 else ''}"
 
@@ -374,7 +374,7 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
         mode = tool_input.get("mode", "add")
         checkin = await db.get_checkin(user_id, day)
         if not checkin:
-            await db.create_checkin(user_id, day, date.today().isoformat())
+            await db.create_checkin(user_id, day, today_et().isoformat())
         if mode == "set":
             await db.set_water(user_id, day, cups)
             new_count = cups
@@ -388,7 +388,7 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
     elif tool_name == "confirm_diet_dm":
         checkin = await db.get_checkin(user_id, day)
         if not checkin:
-            await db.create_checkin(user_id, day, date.today().isoformat())
+            await db.create_checkin(user_id, day, today_et().isoformat())
             checkin = await db.get_checkin(user_id, day)
         if not checkin["diet_done"]:
             await db.toggle_diet(user_id, day)

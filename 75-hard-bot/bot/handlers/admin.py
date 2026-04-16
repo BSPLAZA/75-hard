@@ -15,7 +15,7 @@ from bot.config import ADMIN_USER_ID, CHALLENGE_START_DATE
 from bot.handlers.daily_card import post_daily_card, refresh_card
 from bot.jobs.scheduler import evening_scoreboard_job, nudge_job, weekly_digest_job
 from bot.templates.messages import FAIL_CONFIRM, FAIL_DONE
-from bot.utils.progress import get_day_number
+from bot.utils.progress import today_et, get_day_number
 
 # ConversationHandler states for /fail
 FAIL_AWAITING_CONFIRM = 0
@@ -259,7 +259,7 @@ async def fail_confirm(
     user = await db.get_user(user_id)
     name = user["name"] if user else update.effective_user.first_name
 
-    today = date.today()
+    today = today_et()
     day_number = get_day_number(CHALLENGE_START_DATE, today)
     days_completed = max(0, day_number - 1)
 
@@ -342,7 +342,7 @@ async def redeem_start(
         await update.message.reply_text("You've already used your one redemption. No second chances.")
         return ConversationHandler.END
 
-    today = date.today()
+    today = today_et()
     day_number = max(get_day_number(CHALLENGE_START_DATE, today), 1)
     remaining_days = 75 - day_number
     penalty = 50
@@ -396,7 +396,7 @@ async def redeem_confirm(
     await db.redeem_user(user_id, fee=total_cost)
 
     # Create today's checkin
-    today = date.today()
+    today = today_et()
     day_number = max(get_day_number(CHALLENGE_START_DATE, today), 1)
     await db.create_checkin(user_id, day_number, today.isoformat())
 
@@ -441,12 +441,12 @@ async def admin_test_recap_command(
         return
     try:
         from bot.utils.image_generator import render_recap_image
-        from bot.utils.progress import get_day_number, is_all_complete
+        from bot.utils.progress import today_et, get_day_number, is_all_complete
         from bot.config import CHALLENGE_START_DATE, CHALLENGE_DAYS
 
         db = context.bot_data["db"]
         chat_id = context.bot_data.get("group_chat_id") or update.effective_chat.id
-        day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+        day = max(get_day_number(CHALLENGE_START_DATE, today_et()), 1)
 
         checkins_raw = await db.get_all_checkins_for_day(day)
         checkins = [dict(c) for c in checkins_raw]
@@ -491,11 +491,11 @@ async def admin_test_morning_command(
         return
     try:
         from bot.utils.luke_ai import generate_morning_message
-        from bot.utils.progress import get_day_number, is_all_complete, get_missing_tasks
+        from bot.utils.progress import today_et, get_day_number, is_all_complete, get_missing_tasks
         from bot.config import CHALLENGE_START_DATE
 
         db = context.bot_data["db"]
-        day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+        day = max(get_day_number(CHALLENGE_START_DATE, today_et()), 1)
 
         # For testing: use today's checkins AS yesterday's data so we can see
         # the AI react to actual DB state
@@ -549,11 +549,11 @@ async def admin_test_digest_command(
         from bot.utils.image_generator import render_weekly_digest_image
         from bot.utils.luke_ai import generate_weekly_reflection
         from bot.config import CHALLENGE_START_DATE
-        from bot.utils.progress import get_day_number
+        from bot.utils.progress import today_et, get_day_number
 
         db = context.bot_data["db"]
         chat_id = update.effective_chat.id
-        current_day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+        current_day = max(get_day_number(CHALLENGE_START_DATE, today_et()), 1)
 
         data = await _gather_weekly_data(db, current_day)
 
@@ -672,9 +672,9 @@ async def admin_health_command(
     total_count = len(all_users)
 
     # Users who completed all tasks today
-    day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+    day = max(get_day_number(CHALLENGE_START_DATE, today_et()), 1)
     checkins = await db.get_all_checkins_for_day(day)
-    from bot.utils.progress import is_all_complete
+    from bot.utils.progress import today_et, is_all_complete
     completed_count = sum(1 for c in checkins if is_all_complete(c))
 
     lines = ["Bot Health Report\n"]

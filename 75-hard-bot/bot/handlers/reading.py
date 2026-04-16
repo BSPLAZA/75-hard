@@ -17,7 +17,7 @@ from bot.templates.messages import (
     READ_CHECK_DM,
     READ_SAME_BOOK,
 )
-from bot.utils.progress import get_day_number
+from bot.utils.progress import today_et, get_day_number
 
 
 async def read_start_callback(
@@ -196,7 +196,7 @@ async def handle_dm_text(
 
         day_number = context.user_data.pop("reading_day", None)
         if day_number is None:
-            today = date.today()
+            today = today_et()
             day_number = get_day_number(CHALLENGE_START_DATE, today)
 
         is_new_book = context.user_data.pop("reading_new_book", False)
@@ -240,7 +240,7 @@ async def reread_command(
 ) -> None:
     """Handle /reread -- allow updating today's reading entry."""
     db = context.bot_data["db"]
-    today = date.today()
+    today = today_et()
     day_number = get_day_number(CHALLENGE_START_DATE, today)
 
     if day_number < 1:
@@ -297,7 +297,7 @@ async def setbook_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     title = " ".join(context.args)
-    day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+    day = max(get_day_number(CHALLENGE_START_DATE, today_et()), 1)
 
     if user["current_book"]:
         await db.finish_book(update.effective_user.id, finished_day=day)
@@ -364,7 +364,7 @@ async def setdiet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def bookshelf_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/bookshelf — show what everyone is reading with covers and quotes."""
     db = context.bot_data["db"]
-    day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+    day = max(get_day_number(CHALLENGE_START_DATE, today_et()), 1)
 
     checkins_raw = await db.get_all_checkins_for_day(day)
     checkins = [dict(c) for c in checkins_raw]

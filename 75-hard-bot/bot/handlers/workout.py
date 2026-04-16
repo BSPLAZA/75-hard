@@ -29,7 +29,7 @@ from bot.utils.easter_eggs import (
     check_simultaneous_workout,
     record_workout_time,
 )
-from bot.utils.progress import get_day_number
+from bot.utils.progress import today_et, get_day_number
 
 # Emoji map for workout types and locations
 TYPE_EMOJI = {
@@ -106,7 +106,7 @@ async def workout_quick_callback(
 
     checkin = await db.get_checkin(update.effective_user.id, day_number)
     if not checkin:
-        await db.create_checkin(update.effective_user.id, day_number, date.today().isoformat())
+        await db.create_checkin(update.effective_user.id, day_number, today_et().isoformat())
         checkin = await db.get_checkin(update.effective_user.id, day_number)
 
     # Check if both workouts already done
@@ -263,7 +263,7 @@ async def workout_location_callback(
         await query.answer("Unknown location.", show_alert=True)
         return
 
-    day_number = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+    day_number = max(get_day_number(CHALLENGE_START_DATE, today_et()), 1)
 
     checkin = await db.get_checkin(update.effective_user.id, day_number)
     if not checkin:
@@ -333,7 +333,7 @@ async def workout_undo_command(
 ) -> None:
     """Handle /workout_undo -- clear the most recent workout."""
     db = context.bot_data["db"]
-    today = date.today()
+    today = today_et()
     day_number = get_day_number(CHALLENGE_START_DATE, today)
 
     if day_number < 1:

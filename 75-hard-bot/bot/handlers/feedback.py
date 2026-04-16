@@ -7,7 +7,7 @@ from telegram.ext import CommandHandler, ContextTypes
 
 from bot.config import CHALLENGE_START_DATE
 from bot.templates.messages import FEEDBACK_CONFIRM
-from bot.utils.progress import get_day_number
+from bot.utils.progress import today_et, get_day_number
 
 
 async def _handle_feedback(
@@ -20,7 +20,7 @@ async def _handle_feedback(
 
     db = context.bot_data["db"]
     text = " ".join(context.args)
-    day = get_day_number(CHALLENGE_START_DATE, date.today())
+    day = get_day_number(CHALLENGE_START_DATE, today_et())
     await db.add_feedback(
         update.effective_user.id, fb_type, text, f"day {day}"
     )

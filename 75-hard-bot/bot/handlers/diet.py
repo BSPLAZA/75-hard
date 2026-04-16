@@ -5,6 +5,7 @@ from datetime import date
 from telegram import Update
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
+from bot.utils.progress import today_et
 from bot.config import CB_DIET
 from bot.handlers.daily_card import refresh_card, resolve_day_from_card
 from bot.templates.messages import DIET_OFF, DIET_ON
@@ -28,7 +29,7 @@ async def diet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     checkin = await db.get_checkin(update.effective_user.id, day_number)
     if not checkin:
-        await db.create_checkin(update.effective_user.id, day_number, date.today().isoformat())
+        await db.create_checkin(update.effective_user.id, day_number, today_et().isoformat())
 
     now_on, just_completed = await db.toggle_diet(update.effective_user.id, day_number)
     await db.log_event(update.effective_user.id, user["name"], "diet_toggle", f"on={now_on}")

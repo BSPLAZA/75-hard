@@ -12,7 +12,7 @@ from bot.config import ADMIN_USER_ID, CHALLENGE_DAYS, CHALLENGE_START_DATE
 from bot.handlers.daily_card import post_daily_card
 from bot.utils.easter_eggs import post_milestone_if_needed
 from bot.utils.luke_ai import generate_morning_message, generate_weekly_reflection
-from bot.utils.progress import get_day_number, get_missing_tasks, is_all_complete
+from bot.utils.progress import today_et, get_day_number, get_missing_tasks, is_all_complete
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ ET = pytz.timezone("US/Eastern")
 async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """7 AM ET -- Post daily card. Day 1 includes participant intros."""
     db = context.bot_data["db"]
-    day = get_day_number(CHALLENGE_START_DATE, date.today())
+    day = get_day_number(CHALLENGE_START_DATE, today_et())
     if not (1 <= day <= CHALLENGE_DAYS):
         return
 
@@ -88,7 +88,7 @@ async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not chat_id:
         return
 
-    day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+    day = max(get_day_number(CHALLENGE_START_DATE, today_et()), 1)
     if day > CHALLENGE_DAYS:
         return
 
@@ -138,7 +138,7 @@ async def evening_scoreboard_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 async def nudge_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """11 PM ET -- DM users with incomplete tasks."""
     db = context.bot_data["db"]
-    day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+    day = max(get_day_number(CHALLENGE_START_DATE, today_et()), 1)
     if day > CHALLENGE_DAYS:
         return
 
@@ -316,7 +316,7 @@ async def _send_transformation_dms(context, db, current_day: int) -> None:
 async def weekly_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """8 PM ET Sunday -- Post weekly digest with image, AI reflection, and reading log."""
     # Only run on Sundays
-    if date.today().weekday() != 6:
+    if today_et().weekday() != 6:
         return
 
     db = context.bot_data["db"]
@@ -324,7 +324,7 @@ async def weekly_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not chat_id:
         return
 
-    current_day = max(get_day_number(CHALLENGE_START_DATE, date.today()), 1)
+    current_day = max(get_day_number(CHALLENGE_START_DATE, today_et()), 1)
     if current_day > CHALLENGE_DAYS:
         return
 
@@ -383,7 +383,7 @@ async def weekly_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def noon_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """12 PM ET -- Lock previous day, flag incomplete users to admin."""
-    day = get_day_number(CHALLENGE_START_DATE, date.today())
+    day = get_day_number(CHALLENGE_START_DATE, today_et())
     yesterday = day - 1
     if yesterday < 1:
         return
@@ -412,7 +412,7 @@ async def daily_backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     import shutil
     from bot.config import DATABASE_PATH
     try:
-        backup_path = DATABASE_PATH + f".backup-day{get_day_number(CHALLENGE_START_DATE, date.today())}"
+        backup_path = DATABASE_PATH + f".backup-day{get_day_number(CHALLENGE_START_DATE, today_et())}"
         shutil.copy2(DATABASE_PATH, backup_path)
         logger.info("Database backed up to %s", backup_path)
     except Exception as e:

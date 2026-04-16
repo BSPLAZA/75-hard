@@ -17,7 +17,7 @@ from bot.templates.messages import (
     PHOTO_SAVED,
     PHOTO_UPDATED,
 )
-from bot.utils.progress import get_day_number
+from bot.utils.progress import today_et, get_day_number
 
 
 async def photo_start_callback(
@@ -82,7 +82,7 @@ async def handle_dm_photo(
     db = context.bot_data["db"]
     user_id = update.effective_user.id
 
-    today = date.today()
+    today = today_et()
     day_number = context.user_data.get(
         "photo_day", get_day_number(CHALLENGE_START_DATE, today)
     )

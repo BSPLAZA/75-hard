@@ -1,9 +1,12 @@
 """Progress-tracking utility functions for the 75 Hard bot."""
 
-from datetime import date
+from datetime import date, datetime
+
+import pytz
 
 WATER_GOAL = 16
 BAR_LENGTH = 10
+ET = pytz.timezone("US/Eastern")
 
 
 def water_bar(cups: int) -> str:
@@ -13,8 +16,15 @@ def water_bar(cups: int) -> str:
     return "▓" * filled + "░" * (BAR_LENGTH - filled)
 
 
-def get_day_number(start_date: date, today: date) -> int:
-    """Day 1 on start_date, Day 0 before start."""
+def today_et() -> date:
+    """Return today's date in Eastern Time (not UTC)."""
+    return datetime.now(ET).date()
+
+
+def get_day_number(start_date: date, today: date | None = None) -> int:
+    """Day 1 on start_date, Day 0 before start. Uses ET if today not provided."""
+    if today is None:
+        today = today_et()
     delta = (today - start_date).days
     return delta + 1
 
