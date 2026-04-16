@@ -15,7 +15,7 @@ from bot.config import ADMIN_USER_ID, CHALLENGE_START_DATE
 from bot.handlers.daily_card import post_daily_card, refresh_card
 from bot.jobs.scheduler import evening_scoreboard_job, nudge_job, weekly_digest_job
 from bot.templates.messages import FAIL_CONFIRM, FAIL_DONE
-from bot.utils.progress import today_et, get_day_number
+from bot.utils.progress import today_et, get_day_number, get_current_challenge_day
 
 # ConversationHandler states for /fail
 FAIL_AWAITING_CONFIRM = 0
@@ -766,6 +766,73 @@ async def admin_confirm_payment_command(
         )
 
 
+async def admin_eliminate_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Eliminate a user by name: /admin_eliminate <name>"""
+    if not _is_admin(update.effective_user.id):
+        await _admin_reply(update, context, "Admin only.")
+        return
+
+    if not context.args:
+        await _admin_reply(update, context, "Usage: /admin_eliminate <name>")
+        return
+
+    name = " ".join(context.args)
+    db = context.bot_data["db"]
+    user = await db.get_user_by_name(name)
+
+    if not user:
+        await _admin_reply(update, context, f"No user named '{name}' found.")
+        return
+
+    if not user["active"]:
+        await _admin_reply(
+            update, context,
+            f"{name} is already eliminated (failed day {user['failed_day']})."
+        )
+        return
+
+    current_day = await get_current_challenge_day(db)
+    days_completed = max(0, current_day - 1)
+
+    # Eliminate the user
+    await db.eliminate_user(user["telegram_id"], failed_day=current_day)
+
+    # Refresh the daily card to remove them
+    await refresh_card(context, current_day)
+
+    # Post farewell to the group
+    group_chat_id = context.bot_data.get("group_chat_id")
+    if group_chat_id:
+        active_users = await db.get_active_users()
+        active_count = len(active_users)
+        prize_pool = active_count * 75
+        returned = days_completed  # $1 per day completed
+        remaining = 75 - returned
+
+        try:
+            await context.bot.send_message(
+                chat_id=group_chat_id,
+                text=FAIL_DONE.format(
+                    name=name,
+                    days=days_completed,
+                    returned=returned,
+                    remaining=remaining,
+                    pool=prize_pool,
+                    active=active_count,
+                ),
+            )
+        except Exception:
+            pass
+
+    await _admin_reply(
+        update, context,
+        f"Eliminated {name} on day {current_day}. "
+        f"{days_completed} days completed. Card refreshed."
+    )
+
+
 async def admin_reset_db_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -804,6 +871,7 @@ def get_admin_handlers() -> list:
         CommandHandler("admin_announce", admin_announce_command),
         CommandHandler("admin_reset_db", admin_reset_db_command),
         CommandHandler("admin_confirm_payment", admin_confirm_payment_command),
+        CommandHandler("admin_eliminate", admin_eliminate_command),
         CommandHandler("admin_test_transform", admin_test_transform_command),
     ]
 

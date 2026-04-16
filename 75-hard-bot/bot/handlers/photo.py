@@ -124,9 +124,9 @@ async def handle_dm_photo(
         name_for_egg = user["name"] if user else update.effective_user.first_name
         await check_first_completion(context, name_for_egg, day_number)
 
-    # Notify the group
+    # Notify the group (only on first submission, not replacements)
     group_chat_id = context.bot_data.get("group_chat_id")
-    if group_chat_id:
+    if group_chat_id and not already_had_photo:
         name = user["name"]
         # Count how many users have submitted photos today
         checkins = await db.get_all_checkins_for_day(day_number)

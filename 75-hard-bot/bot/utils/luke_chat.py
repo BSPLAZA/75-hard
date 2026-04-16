@@ -3,7 +3,7 @@
 import json
 import logging
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import anthropic
 
@@ -55,6 +55,7 @@ WHAT YOU CAN DO:
 - Log feedback, bugs, suggestions
 - Generate transformation photos and timelapses
 - Give honest assessments of how someone or the group is doing
+- Backfill yesterday's tasks before noon ET (use backfill_task). If someone says they forgot to log a workout, water, reading, or diet from yesterday, help them backfill it. Only works before noon ET the next day.
 
 WHAT YOU CAN'T DO:
 - Mark tasks as complete (people do that via the daily card)
@@ -188,6 +189,25 @@ TOOLS = [
         "name": "get_timelapse",
         "description": "Generate an animated video timelapse of all the user's progress photos. Use when user asks for a timelapse, slideshow, animation of their photos, etc.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "backfill_task",
+        "description": "Log a task for YESTERDAY that the user forgot. Only works before noon ET. Use when user says they forgot to log something from yesterday.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "enum": ["workout_outdoor", "workout_indoor", "water", "reading", "diet"],
+                    "description": "Which task to backfill for yesterday",
+                },
+                "detail": {
+                    "type": "string",
+                    "description": "Optional detail like water cup count, workout type, book title, or reading takeaway",
+                },
+            },
+            "required": ["task"],
+        },
     },
     {
         "name": "log_feedback",
@@ -412,6 +432,59 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
             return "REFRESH_CARD: Diet un-confirmed. Be honest with yourself."
         return "Diet wasn't confirmed today — nothing to undo."
 
+    elif tool_name == "backfill_task":
+        import pytz as _pytz
+        _ET = _pytz.timezone("US/Eastern")
+        now_et = datetime.now(_ET)
+
+        # Only allow backfill before noon ET
+        if now_et.hour >= 12:
+            return "DENIED: It's past noon ET. Yesterday's tasks are locked in. Backfill window closed."
+
+        yesterday = day - 1
+        if yesterday < 1:
+            return "DENIED: There's no yesterday to backfill. The challenge just started."
+
+        # Ensure checkin exists for yesterday
+        checkin = await db.get_checkin(user_id, yesterday)
+        if not checkin:
+            yesterday_date = (now_et.date() - timedelta(days=1)).isoformat()
+            await db.create_checkin(user_id, yesterday, yesterday_date)
+
+        task = tool_input["task"]
+        detail = tool_input.get("detail", "")
+
+        if task == "workout_outdoor":
+            wtype = detail or "workout"
+            slot, _ = await db.log_workout(user_id, yesterday, wtype, "outdoor")
+            result_msg = f"REFRESH_CARD: Backfilled outdoor {wtype} for day {yesterday}, slot {slot}/2"
+        elif task == "workout_indoor":
+            wtype = detail or "workout"
+            slot, _ = await db.log_workout(user_id, yesterday, wtype, "indoor")
+            result_msg = f"REFRESH_CARD: Backfilled indoor {wtype} for day {yesterday}, slot {slot}/2"
+        elif task == "water":
+            cups = 16  # default to full gallon
+            if detail:
+                try:
+                    cups = int(detail)
+                except ValueError:
+                    cups = 16
+            await db.set_water(user_id, yesterday, min(cups, 16))
+            result_msg = f"REFRESH_CARD: Backfilled water for day {yesterday} -- set to {min(cups, 16)}/16 cups"
+        elif task == "reading":
+            book_title = detail or "unknown"
+            await db.log_reading(user_id, yesterday, book_title, "")
+            result_msg = f"REFRESH_CARD: Backfilled reading for day {yesterday}"
+        elif task == "diet":
+            checkin = await db.get_checkin(user_id, yesterday)
+            if not checkin["diet_done"]:
+                await db.toggle_diet(user_id, yesterday)
+            result_msg = f"REFRESH_CARD: Backfilled diet for day {yesterday}"
+        else:
+            return f"Unknown task type: {task}"
+
+        return result_msg
+
     elif tool_name == "escalate_to_admin":
         reason = tool_input.get("reason", "No reason given")
         user_name = tool_input.get("user_name", "unknown")
@@ -496,7 +569,7 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
         # Process tool calls (may need multiple rounds)
         cover_url = None
         media = None
-        context_data = {"refresh_card": False}
+        context_data = {"refresh_card": False, "refresh_days": set()}
         while response.stop_reason == "tool_use":
             tool_results = []
             for block in response.content:
@@ -518,6 +591,13 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
                     # Capture card refresh signals
                     if result.startswith("REFRESH_CARD:"):
                         context_data["refresh_card"] = True
+                        # Extract day from backfill results like "...for day 5..."
+                        if block.name == "backfill_task" and "for day " in result:
+                            try:
+                                backfill_day = int(result.split("for day ")[1].split(",")[0].split(" ")[0])
+                                context_data["refresh_days"].add(backfill_day)
+                            except (ValueError, IndexError):
+                                pass
 
             messages.append({"role": "assistant", "content": response.content})
             messages.append({"role": "user", "content": tool_results})
@@ -547,7 +627,13 @@ async def chat_with_luke(message: str, db, user_id: int) -> dict:
         if text:
             _add_to_history(user_id, "assistant", text)
 
-        return {"text": text, "cover_url": cover_url, "media": media, "refresh_card": context_data["refresh_card"]}
+        return {
+            "text": text,
+            "cover_url": cover_url,
+            "media": media,
+            "refresh_card": context_data["refresh_card"],
+            "refresh_days": context_data["refresh_days"],
+        }
 
     except Exception as e:
         logger.error("Luke chat failed: %s", e)

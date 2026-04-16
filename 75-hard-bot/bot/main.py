@@ -206,6 +206,10 @@ def main() -> None:
                 from datetime import date as _d
                 day = max(_gdn(_csd, _d.today()), 1)
                 await refresh_card(context, day)
+                # Also refresh any backfilled day's card
+                for bf_day in result.get("refresh_days", set()):
+                    if bf_day != day:
+                        await refresh_card(context, bf_day)
 
             if result.get("cover_url"):
                 await update.message.reply_photo(
