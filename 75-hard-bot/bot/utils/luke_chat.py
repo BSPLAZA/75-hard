@@ -697,9 +697,39 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
     return "Unknown tool."
 
 
-# Per-user conversation history (in-memory, survives within a bot session)
+# Per-user conversation history (in-memory, lazy-loaded from conversation_log on first access)
 _chat_history: dict[int, list[dict]] = {}
+_history_loaded: set[int] = set()  # users we've already lazy-loaded from DB
 MAX_HISTORY = 10  # messages per user
+
+
+async def _ensure_history_loaded(user_id: int, db) -> None:
+    """Hydrate _chat_history[user_id] from conversation_log on first access.
+
+    Lets chat memory survive bot restarts. Idempotent — only loads once per process.
+    Skips entries with image content since we don't store image bytes in the log.
+    """
+    if user_id in _history_loaded:
+        return
+    _history_loaded.add(user_id)
+    try:
+        rows = await db.get_recent_conversations(limit=MAX_HISTORY, telegram_id=user_id)
+    except Exception:
+        return
+    # rows are newest-first; reverse to chronological
+    msgs: list[dict] = []
+    for r in reversed(list(rows)):
+        u_msg = r["user_message"] or ""
+        l_msg = r["luke_response"] or ""
+        # Skip rows with image markers — we can't reconstruct the image
+        if u_msg.startswith("[image]"):
+            continue
+        if u_msg:
+            msgs.append({"role": "user", "content": u_msg})
+        if l_msg and not l_msg.startswith("[ERROR]"):
+            msgs.append({"role": "assistant", "content": l_msg})
+    if msgs:
+        _chat_history[user_id] = msgs[-(MAX_HISTORY * 2):]
 
 
 def _get_history(user_id: int) -> list[dict]:
@@ -732,6 +762,9 @@ async def chat_with_luke(
 
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+        # Lazy-hydrate per-user chat memory from the DB on first message after restart
+        await _ensure_history_loaded(user_id, db)
 
         # Build messages with history for context
         history = _get_history(user_id)
