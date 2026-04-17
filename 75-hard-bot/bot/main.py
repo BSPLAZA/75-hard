@@ -164,6 +164,12 @@ def main() -> None:
     # Text handlers — custom workout name (group), reading flow (DM), and AI chat (DM)
     from bot.utils.luke_chat import chat_with_luke
 
+    PRIVATE_BOT_REPLY = (
+        "this is a private accountability bot for a closed 75 Hard challenge. "
+        "if you were supposed to be in this group, ask the organizer to add you. "
+        "otherwise, sorry — nothing for you here."
+    )
+
     async def combined_text_handler(update: Update, context):
         """Route text messages to the right handler."""
         if await handle_custom_workout_name(update, context):
@@ -186,6 +192,27 @@ def main() -> None:
 
             db = context.bot_data["db"]
             user_id = update.effective_user.id
+
+            # Gate: only registered participants may invoke the LLM (cost protection
+            # + privacy). Strangers get a polite turn-away. Onboarding still works
+            # because that flow is owned by the higher-priority ConversationHandler.
+            user_row = await db.get_user(user_id)
+            if not user_row or not user_row["dm_registered"]:
+                u = update.effective_user
+                logger.warning(
+                    "STRANGER_DM_BLOCKED chat_id=%d username=%s text=%r",
+                    user_id, u.username or "", message[:80],
+                )
+                try:
+                    await db.log_event(
+                        user_id, u.first_name or u.username or "",
+                        "stranger_dm_blocked", f"text={message[:120]!r}",
+                    )
+                except Exception:
+                    pass
+                await update.message.reply_text(PRIVATE_BOT_REPLY)
+                return
+
             result = await chat_with_luke(message, db, user_id)
 
             # Handle media requests (transformation/timelapse)

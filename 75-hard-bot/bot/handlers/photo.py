@@ -76,9 +76,19 @@ async def handle_dm_photo(
     db = context.bot_data["db"]
     user_id = update.effective_user.id
 
+    # Gate: only registered participants may DM photos (vision API costs $).
     user = await db.get_user(user_id)
-    if not user:
-        await update.message.reply_text("Register first! DM me /start")
+    if not user or not user["dm_registered"]:
+        try:
+            await db.log_event(
+                user_id, None, "stranger_photo_blocked",
+                f"username={update.effective_user.username or ''}",
+            )
+        except Exception:
+            pass
+        await update.message.reply_text(
+            "this is a private bot for a closed challenge. ask the organizer to add you."
+        )
         return
 
     photo = update.message.photo[-1]
