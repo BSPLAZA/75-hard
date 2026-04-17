@@ -17,6 +17,8 @@ from bot.utils.progress import today_et, get_day_number, get_missing_tasks, is_a
 logger = logging.getLogger(__name__)
 
 ET = pytz.timezone("US/Eastern")
+CT = pytz.timezone("US/Central")
+MT = pytz.timezone("US/Mountain")
 PT = pytz.timezone("US/Pacific")
 
 
@@ -128,13 +130,15 @@ async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def _nudge_for_tz(context: ContextTypes.DEFAULT_TYPE, tz_label: str) -> None:
-    """Send same-day DM nudge to users whose USER_TIMEZONES entry matches tz_label.
+    """Send same-day DM nudge to users whose users.timezone matches tz_label.
 
-    tz_label is "US/Eastern" or "US/Pacific". Fires at 10pm in that zone.
+    tz_label is an IANA name like "US/Eastern". Fires at 10pm in that zone.
     Uses card-based day so the nudge always references the open challenge day,
     even when 10pm PT crosses calendar midnight ET.
+
+    Source of truth is `users.timezone` in the DB (set during init from env or
+    updated dynamically via Luke's set_user_timezone tool).
     """
-    from bot.config import USER_TIMEZONES
     from bot.utils.progress import get_current_challenge_day
 
     db = context.bot_data["db"]
@@ -142,13 +146,14 @@ async def _nudge_for_tz(context: ContextTypes.DEFAULT_TYPE, tz_label: str) -> No
     if day < 1 or day > CHALLENGE_DAYS:
         return
 
-    target_names = {n for n, tz in USER_TIMEZONES.items() if tz == tz_label}
-    if not target_names:
+    target_users = await db.get_users_in_timezone(tz_label)
+    if not target_users:
         return
+    target_ids = {u["telegram_id"] for u in target_users}
 
     checkins = await db.get_all_checkins_for_day(day)
     for c in checkins:
-        if c["name"] not in target_names:
+        if c["telegram_id"] not in target_ids:
             continue
         if is_all_complete(c):
             continue
@@ -172,6 +177,16 @@ async def _nudge_for_tz(context: ContextTypes.DEFAULT_TYPE, tz_label: str) -> No
 async def nudge_job_et(context: ContextTypes.DEFAULT_TYPE) -> None:
     """10 PM ET -- DM nudge for east-coast users."""
     await _nudge_for_tz(context, "US/Eastern")
+
+
+async def nudge_job_ct(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """10 PM CT -- DM nudge for central-time users."""
+    await _nudge_for_tz(context, "US/Central")
+
+
+async def nudge_job_mt(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """10 PM MT -- DM nudge for mountain-time users."""
+    await _nudge_for_tz(context, "US/Mountain")
 
 
 async def nudge_job_pt(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -542,6 +557,12 @@ def schedule_jobs(job_queue) -> None:
     )
     job_queue.run_daily(
         nudge_job_et, time=time(22, 0, tzinfo=ET), name="nudge_et"
+    )
+    job_queue.run_daily(
+        nudge_job_ct, time=time(22, 0, tzinfo=CT), name="nudge_ct"
+    )
+    job_queue.run_daily(
+        nudge_job_mt, time=time(22, 0, tzinfo=MT), name="nudge_mt"
     )
     job_queue.run_daily(
         nudge_job_pt, time=time(22, 0, tzinfo=PT), name="nudge_pt"

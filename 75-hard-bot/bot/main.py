@@ -12,7 +12,7 @@ from telegram.ext import (
     filters,
 )
 
-from bot.config import BOT_TOKEN, DATABASE_PATH, GROUP_CHAT_ID, ORGANIZER, PARTICIPANTS
+from bot.config import BOT_TOKEN, DATABASE_PATH, GROUP_CHAT_ID, ORGANIZER, PARTICIPANTS, USER_TIMEZONES
 from bot.database import Database
 from bot.handlers.admin import get_admin_handlers, get_fail_handler, get_redeem_handler
 from bot.handlers.transformation import get_transformation_handler, get_timelapse_handler
@@ -54,6 +54,13 @@ async def post_init(application: Application) -> None:
         if name not in existing_names:
             placeholder_id = random.randint(900000000, 999999999)
             await db.add_user(placeholder_id, name)
+
+    # Seed users.timezone from USER_TIMEZONES env on first boot. Idempotent —
+    # only sets timezone for users that don't already have one in the DB so
+    # Luke's set_user_timezone tool changes are preserved across restarts.
+    for u in await db.get_all_users():
+        if u["timezone"] is None and u["name"] in USER_TIMEZONES:
+            await db.set_user_timezone(u["telegram_id"], USER_TIMEZONES[u["name"]])
 
     schedule_jobs(application.job_queue)
     logger.info(

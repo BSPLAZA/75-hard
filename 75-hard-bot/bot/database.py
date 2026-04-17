@@ -140,6 +140,7 @@ class Database:
             "ALTER TABLE users ADD COLUMN redeemed INTEGER DEFAULT 0",
             "ALTER TABLE users ADD COLUMN redemption_fee INTEGER DEFAULT 0",
             "ALTER TABLE users ADD COLUMN start_day INTEGER DEFAULT 1",
+            "ALTER TABLE users ADD COLUMN timezone TEXT",
             "ALTER TABLE books ADD COLUMN cover_url TEXT",
             "CREATE TABLE IF NOT EXISTS bot_settings (key TEXT PRIMARY KEY, value TEXT)",
         ]
@@ -149,6 +150,25 @@ class Database:
                 await self._conn.commit()
             except Exception:
                 pass
+
+    async def set_user_timezone(self, telegram_id: int, timezone: str | None) -> None:
+        """Set this user's IANA timezone (e.g. 'US/Eastern'). Pass None to clear.
+
+        Used by the same-day nudge job to decide whether to DM at 10pm local.
+        """
+        await self._conn.execute(
+            "UPDATE users SET timezone = ? WHERE telegram_id = ?",
+            (timezone, telegram_id),
+        )
+        await self._conn.commit()
+
+    async def get_users_in_timezone(self, timezone: str) -> list[aiosqlite.Row]:
+        """Return active users whose timezone matches (e.g. 'US/Eastern')."""
+        async with self._conn.execute(
+            "SELECT * FROM users WHERE active = 1 AND timezone = ?",
+            (timezone,),
+        ) as cur:
+            return await cur.fetchall()
 
     async def set_user_start_day(self, telegram_id: int, start_day: int) -> None:
         """Set when this user's personal Day 1 is (in global day numbering).

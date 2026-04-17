@@ -53,6 +53,7 @@ WHAT YOU CAN DO:
 - Answer questions about the rules, the challenge, anyone's status
 - Set/correct books (search-confirm-save flow — see BOOKS below)
 - Set diets (push back on changes after the challenge starts)
+- Set the user's timezone (via set_user_timezone) when they mention where they live or what TZ they're in. Map free-form answers ("east coast", "I'm in Chicago", "Mountain", "PT") to one of: US/Eastern, US/Central, US/Mountain, US/Pacific. This controls when their 10pm same-day reminder DM fires.
 - Log feedback, bugs, suggestions
 - Generate transformation photos and timelapses
 - Give honest assessments of how someone or the group is doing
@@ -172,6 +173,21 @@ TOOLS = [
                 },
             },
             "required": ["title", "intent"],
+        },
+    },
+    {
+        "name": "set_user_timezone",
+        "description": "Set the user's timezone so the 10pm same-day reminder DM fires at the right local time. Use when the user mentions where they live or what timezone they're in (e.g. 'I'm in NYC', 'I'm Pacific', 'central time', 'denver', 'PT', etc). Map their answer to one of: US/Eastern, US/Central, US/Mountain, US/Pacific. After setting, briefly confirm you got it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "timezone": {
+                    "type": "string",
+                    "enum": ["US/Eastern", "US/Central", "US/Mountain", "US/Pacific"],
+                    "description": "IANA timezone — exactly one of US/Eastern, US/Central, US/Mountain, US/Pacific",
+                },
+            },
+            "required": ["timezone"],
         },
     },
     {
@@ -481,6 +497,15 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
             return "DENIED: you already have a current book. Ask user whether they finished it (intent='finish_and_start') or this is a typo correction (intent='correct')."
         await db.set_current_book(user_id, title, started_day=day, cover_url=cover_url or None)
         return f'Book set to "{title}". Cover URL: {cover_url or "none found"}'
+
+    elif tool_name == "set_user_timezone":
+        tz = tool_input.get("timezone", "")
+        if tz not in ("US/Eastern", "US/Central", "US/Mountain", "US/Pacific"):
+            return f"DENIED: invalid timezone '{tz}'. Must be one of US/Eastern, US/Central, US/Mountain, US/Pacific."
+        await db.set_user_timezone(user_id, tz)
+        # Pretty short label for confirmation messages
+        labels = {"US/Eastern": "ET", "US/Central": "CT", "US/Mountain": "MT", "US/Pacific": "PT"}
+        return f"Timezone set to {tz} ({labels[tz]}). The 10pm same-day reminder will fire at 10pm {labels[tz]} from now on."
 
     elif tool_name == "set_diet":
         user = await db.get_user(user_id)
