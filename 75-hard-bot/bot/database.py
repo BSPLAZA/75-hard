@@ -607,6 +607,47 @@ class Database:
             row = await cur.fetchone()
         return row["cover_url"] if row else None
 
+    async def correct_current_book(
+        self,
+        telegram_id: int,
+        new_title: str,
+        new_cover_url: str | None,
+    ) -> bool:
+        """Fix a typo on the user's current book. Updates title + cover, no finish.
+
+        Returns True if a book was updated, False if user has no current book.
+        """
+        user = await self.get_user(telegram_id)
+        if not user or not user["current_book"]:
+            return False
+
+        old_title = user["current_book"]
+        # Update users.current_book
+        await self._conn.execute(
+            "UPDATE users SET current_book = ? WHERE telegram_id = ?",
+            (new_title, telegram_id),
+        )
+        # Update the most recent unfinished books row matching the old title
+        await self._conn.execute(
+            """
+            UPDATE books
+            SET title = ?, cover_url = ?
+            WHERE id = (
+                SELECT id FROM books
+                WHERE telegram_id = ? AND title = ? AND finished_day IS NULL
+                ORDER BY id DESC LIMIT 1
+            )
+            """,
+            (new_title, new_cover_url, telegram_id, old_title),
+        )
+        await self._conn.commit()
+        return True
+
+    async def delete_book_entry(self, book_id: int) -> None:
+        """Hard-delete a books row by id. Used for cleaning up typo entries."""
+        await self._conn.execute("DELETE FROM books WHERE id = ?", (book_id,))
+        await self._conn.commit()
+
     async def finish_book(self, telegram_id: int, *, finished_day: int) -> None:
         """Mark the user's current book as finished."""
         user = await self.get_user(telegram_id)

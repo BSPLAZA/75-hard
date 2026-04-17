@@ -51,12 +51,44 @@ ESCALATION - flag these to Bryan by logging as feedback type "escalation":
 
 WHAT YOU CAN DO:
 - Answer questions about the rules, the challenge, anyone's status
-- Set books and diets (but push back on diet changes)
+- Set/correct books (search-confirm-save flow — see BOOKS below)
+- Set diets (push back on changes after the challenge starts)
 - Log feedback, bugs, suggestions
 - Generate transformation photos and timelapses
 - Give honest assessments of how someone or the group is doing
 - Backfill yesterday's tasks before noon PT (use backfill_task for workout/water/reading/diet). Day 1 has a grace window — Day 1 backfills are allowed any time, no cutoff. From Day 2 onwards, the noon PT cutoff applies.
 - Backfill yesterday's PHOTO with request_backfill_photo. Use when the user says they forgot to send their progress photo for a previous day. The tool will prompt them to send the photo; the next photo they DM will be saved to that day. Same Day 1 grace applies.
+
+WHICH DAY IS THIS FOR (CRITICAL — read this carefully):
+Before logging anything, you must know whether the user means today or a previous day. The tools assume today unless you explicitly use a backfill tool.
+- If the user says "today", "just now", "did X today" → log for today (log_workout_dm, log_water_dm, etc.)
+- If the user says "yesterday" or a specific past day → use backfill_task (or request_backfill_photo for photos)
+- If the user says "I did X" or "completed X" with NO time reference AND it's evening/night → ASSUME TODAY but confirm in your reply ("got it, logged for today") so they can correct if wrong
+- If the user says "I did X" or "completed X" with NO time reference AND it's early morning → ASK: "today or yesterday?" before calling any tool
+- When in doubt: ASK. It's much better to ask one clarifying question than to put a workout on the wrong day and confuse the tally later.
+
+GROUND TRUTH, NOT MEMORY (CRITICAL):
+Your chat memory is SHORT and can be WRONG. The database is the only source of truth.
+- Before you claim ANYTHING about a user's logged state ("you already did X", "your indoor workout is Y", "yesterday you had both workouts"), you MUST call the appropriate tool FIRST.
+- Questions about TODAY → call get_my_status
+- Questions about YESTERDAY or any past day → call get_my_status_for_day with the day_number
+- NEVER answer "what did I log for day N" from chat memory alone. You will get it wrong because your memory doesn't reliably persist across sessions/days.
+- If a user says "you logged that wrong, it was yesterday not today" → call get_my_status_for_day for both the past day and today to see the actual state, then fix with undo_workout + backfill_task as needed.
+- When making a correction that spans multiple days, after you're done call get_my_status_for_day for each affected day and read the state back to the user so they can verify.
+
+BOOKS (search-confirm-save):
+- ALWAYS call search_books FIRST. Never call set_book without searching first.
+- search_books returns up to 3 candidates with title, author, cover_url.
+- Show the user the TOP candidate ("looks like Savor by Thich Nhat Hanh — that's it?"). If the top match is clearly correct (rare typos, exact author match), still confirm before saving.
+- If the user says "no" or you see multiple plausible matches, list 2-3 options and ask which one. If none match, ask for the author and search again.
+- WHEN SEARCH RETURNS NOTHING (or nothing matches even after retrying with the author): the book may not be on Apple Books (this happens for self-published or niche titles like Andy Frisella's "75 Hard"). Don't keep saying "I can't find it." Instead, OFFER to save the book without a cover image: "I couldn't find that one in our catalog — want me to save it as '<title>' anyway, just without a thumbnail? you can always swap the cover later." If they confirm, call set_book with the user's exact title and cover_url="".
+- Only call set_book AFTER the user confirms.
+- Pass the EXACT title and cover_url from the chosen candidate to set_book (or empty string if no cover).
+- Pick intent carefully:
+    intent="new" — user has no current book yet
+    intent="correct" — user is fixing a typo on their CURRENT book (does NOT mark previous as finished)
+    intent="finish_and_start" — user finished their previous book and is starting a new one
+- If get_my_profile shows the user already has a current_book and they're trying to set another, ASK them: "did you finish [current_book] or just want to fix the title?"
 
 WHAT YOU CAN'T DO:
 - Eliminate or redeem people (they use /fail and /redeem)
@@ -84,6 +116,17 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
+        "name": "get_my_status_for_day",
+        "description": "Get the user's checkin status for a SPECIFIC day_number (e.g., yesterday, Day 1). Use this whenever the user asks about a past day ('what did I log yesterday', 'what was my Day 1 workout'). NEVER answer questions about past days from your chat memory — always call this tool.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "day_number": {"type": "integer", "description": "The day to look up (1-indexed)"},
+            },
+            "required": ["day_number"],
+        },
+    },
+    {
         "name": "get_my_books",
         "description": "Get all books the current user has read during the challenge",
         "input_schema": {"type": "object", "properties": {}, "required": []},
@@ -104,12 +147,31 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
-        "name": "set_book",
-        "description": "Set or change the user's current book",
+        "name": "search_books",
+        "description": "Search for book candidates by title (and optionally author). Returns top 3 matches with title, author, and cover URL — does NOT save anything. ALWAYS call this BEFORE set_book so you can verify you have the right book. Especially important for short or common titles like 'Savor' or 'Atomic'.",
         "input_schema": {
             "type": "object",
-            "properties": {"title": {"type": "string", "description": "Book title"}},
-            "required": ["title"],
+            "properties": {
+                "query": {"type": "string", "description": "Search terms — include author name when you know it for better matches"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "set_book",
+        "description": "Save the user's book to the DB. Call this only AFTER search_books and after the user confirms the chosen candidate. Pass the EXACT title and cover_url from the chosen search_books candidate.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Book title — use the title from the chosen search_books candidate"},
+                "cover_url": {"type": "string", "description": "Cover URL from the chosen search_books candidate (empty string if none found)"},
+                "intent": {
+                    "type": "string",
+                    "enum": ["new", "correct", "finish_and_start"],
+                    "description": "new = first book or no current book exists; correct = fixing a typo on current book (does NOT mark old as finished); finish_and_start = user finished previous book and is starting this one",
+                },
+            },
+            "required": ["title", "intent"],
         },
     },
     {
@@ -274,6 +336,33 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
         tasks_done = 6 - len(missing)
         return f"Day {day}: {tasks_done}/6 complete. Still need: {', '.join(missing)}. Water: {c['water_cups']}/16."
 
+    elif tool_name == "get_my_status_for_day":
+        target_day = int(tool_input["day_number"])
+        if target_day < 1 or target_day > day:
+            return f"Invalid day {target_day}. Today is day {day}."
+        checkin = await db.get_checkin(user_id, target_day)
+        if not checkin:
+            return f"No checkin row exists for day {target_day}."
+        c = dict(checkin)
+        parts = [f"Day {target_day}:"]
+        if c.get("workout_1_done"):
+            parts.append(f"workout 1 = {c.get('workout_1_location', '?')} {c.get('workout_1_type', '?')}")
+        else:
+            parts.append("workout 1 NOT done")
+        if c.get("workout_2_done"):
+            parts.append(f"workout 2 = {c.get('workout_2_location', '?')} {c.get('workout_2_type', '?')}")
+        else:
+            parts.append("workout 2 NOT done")
+        parts.append(f"water {c.get('water_cups', 0)}/16")
+        parts.append(f"diet {'done' if c.get('diet_done') else 'NOT done'}")
+        if c.get("reading_done"):
+            parts.append(f"read '{c.get('book_title', '?')}'")
+        else:
+            parts.append("reading NOT done")
+        parts.append(f"photo {'done' if c.get('photo_done') else 'NOT done'}")
+        parts.append(f"overall: {'COMPLETE' if is_all_complete(c) else 'incomplete'}")
+        return ". ".join(parts)
+
     elif tool_name == "get_my_books":
         async with db._conn.execute(
             "SELECT title, started_day, finished_day FROM books WHERE telegram_id = ? ORDER BY started_day",
@@ -322,14 +411,45 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
             lines.append(f'{u["name"]}: "{book}"')
         return "Current books: " + "; ".join(lines)
 
+    elif tool_name == "search_books":
+        from bot.utils.books import search_books as _search
+        import json as _json
+        candidates = await _search(tool_input["query"], limit=3)
+        if not candidates:
+            return _json.dumps({"results": [], "note": "No candidates found. Ask user for more detail (author, year)."})
+        return _json.dumps({"results": candidates})
+
     elif tool_name == "set_book":
         title = tool_input["title"]
+        cover_url = tool_input.get("cover_url") or ""
+        intent = tool_input.get("intent", "new")
+
+        # Fall back to a fresh search if no cover_url was passed (legacy callers)
+        if not cover_url:
+            from bot.utils.books import fetch_book_cover
+            cover_url = await fetch_book_cover(title) or ""
+
         user = await db.get_user(user_id)
-        if user and dict(user).get("current_book"):
-            await db.finish_book(user_id, finished_day=day)
-        from bot.utils.books import fetch_book_cover
-        cover_url = await fetch_book_cover(title)
-        await db.set_current_book(user_id, title, started_day=day, cover_url=cover_url)
+        has_current = bool(user and dict(user).get("current_book"))
+
+        if intent == "correct":
+            if not has_current:
+                return "DENIED: no current book to correct. Use intent='new' instead."
+            ok = await db.correct_current_book(user_id, title, cover_url or None)
+            if not ok:
+                return "Could not update current book."
+            return f'Book corrected to "{title}". Cover URL: {cover_url or "none found"}'
+
+        if intent == "finish_and_start":
+            if has_current:
+                await db.finish_book(user_id, finished_day=day)
+            await db.set_current_book(user_id, title, started_day=day, cover_url=cover_url or None)
+            return f'Previous book finished. New book set to "{title}". Cover URL: {cover_url or "none found"}'
+
+        # intent == "new"
+        if has_current:
+            return "DENIED: you already have a current book. Ask user whether they finished it (intent='finish_and_start') or this is a typo correction (intent='correct')."
+        await db.set_current_book(user_id, title, started_day=day, cover_url=cover_url or None)
         return f'Book set to "{title}". Cover URL: {cover_url or "none found"}'
 
     elif tool_name == "set_diet":
