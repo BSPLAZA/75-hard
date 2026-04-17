@@ -18,10 +18,10 @@ async def db():
 
 @pytest.mark.asyncio
 async def test_add_user(db):
-    await db.add_user(111, "Bryan", tier=75)
+    await db.add_user(111, "Alice", tier=75)
     user = await db.get_user(111)
     assert user is not None
-    assert user["name"] == "Bryan"
+    assert user["name"] == "Alice"
     assert user["tier"] == 75
     assert user["active"] == 1
     assert user["dm_registered"] == 0
@@ -29,11 +29,11 @@ async def test_add_user(db):
 
 @pytest.mark.asyncio
 async def test_add_user_duplicate_updates(db):
-    await db.add_user(111, "Bryan", tier=75)
-    await db.add_user(111, "Bryan Updated", tier=30)
+    await db.add_user(111, "Alice", tier=75)
+    await db.add_user(111, "Alice Updated", tier=30)
     user = await db.get_user(111)
     # Should update on conflict
-    assert user["name"] == "Bryan Updated"
+    assert user["name"] == "Alice Updated"
     assert user["tier"] == 30
 
 
@@ -57,7 +57,7 @@ async def test_get_active_users(db):
 
 @pytest.mark.asyncio
 async def test_register_dm(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.register_dm(111)
     user = await db.get_user(111)
     assert user["dm_registered"] == 1
@@ -65,7 +65,7 @@ async def test_register_dm(db):
 
 @pytest.mark.asyncio
 async def test_eliminate_user(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.eliminate_user(111, failed_day=10)
     user = await db.get_user(111)
     assert user["active"] == 0
@@ -85,7 +85,7 @@ async def test_get_unregistered_names(db):
 
 @pytest.mark.asyncio
 async def test_create_and_get_checkin(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     checkin = await db.create_checkin(111, day_number=1, date="2026-04-15")
     assert checkin is not None
     assert checkin["day_number"] == 1
@@ -99,7 +99,7 @@ async def test_create_and_get_checkin(db):
 @pytest.mark.asyncio
 async def test_create_checkin_idempotent(db):
     """Creating a checkin for the same user+day returns the existing one."""
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     c1 = await db.create_checkin(111, 1, "2026-04-15")
     c2 = await db.create_checkin(111, 1, "2026-04-15")
     assert c1["id"] == c2["id"]
@@ -127,7 +127,7 @@ async def test_get_all_checkins_for_day(db):
 
 @pytest.mark.asyncio
 async def test_increment_water(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
     count, _ = await db.increment_water(111, 1)
     assert count == 1
@@ -137,7 +137,7 @@ async def test_increment_water(db):
 
 @pytest.mark.asyncio
 async def test_increment_water_cap_at_16(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
     for _ in range(20):
         count, _ = await db.increment_water(111, 1)
@@ -146,7 +146,7 @@ async def test_increment_water_cap_at_16(db):
 
 @pytest.mark.asyncio
 async def test_set_water(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
     await db.set_water(111, 1, 10)
     checkin = await db.get_checkin(111, 1)
@@ -157,7 +157,7 @@ async def test_set_water(db):
 
 @pytest.mark.asyncio
 async def test_toggle_diet(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
     result, _ = await db.toggle_diet(111, 1)
     assert result is True  # was 0, now 1
@@ -167,7 +167,7 @@ async def test_toggle_diet(db):
 
 @pytest.mark.asyncio
 async def test_toggle_diet_off(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
     await db.toggle_diet(111, 1)   # 0 -> 1
     result, _ = await db.toggle_diet(111, 1)  # 1 -> 0
@@ -180,7 +180,7 @@ async def test_toggle_diet_off(db):
 
 @pytest.mark.asyncio
 async def test_log_first_workout(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
     slot, _ = await db.log_workout(111, 1, workout_type="run", location="outdoor")
     assert slot == 1
@@ -192,7 +192,7 @@ async def test_log_first_workout(db):
 
 @pytest.mark.asyncio
 async def test_log_second_workout(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
     await db.log_workout(111, 1, workout_type="run", location="outdoor")
     slot, _ = await db.log_workout(111, 1, workout_type="lift", location="indoor")
@@ -205,7 +205,7 @@ async def test_log_second_workout(db):
 
 @pytest.mark.asyncio
 async def test_undo_last_workout_clears_workout_2_first(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
     await db.log_workout(111, 1, "run", "outdoor")
     await db.log_workout(111, 1, "lift", "indoor")
@@ -221,7 +221,7 @@ async def test_undo_last_workout_clears_workout_2_first(db):
 
 @pytest.mark.asyncio
 async def test_undo_last_workout_clears_workout_1(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
     await db.log_workout(111, 1, "run", "outdoor")
 
@@ -234,7 +234,7 @@ async def test_undo_last_workout_clears_workout_1(db):
 
 @pytest.mark.asyncio
 async def test_undo_last_workout_nothing_to_undo(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
     undone = await db.undo_last_workout(111, 1)
     assert undone == 0
@@ -244,7 +244,7 @@ async def test_undo_last_workout_nothing_to_undo(db):
 
 @pytest.mark.asyncio
 async def test_log_reading(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
     await db.log_reading(111, 1, book_title="Atomic Habits", takeaway="Small changes matter")
     checkin = await db.get_checkin(111, 1)
@@ -257,7 +257,7 @@ async def test_log_reading(db):
 
 @pytest.mark.asyncio
 async def test_log_photo(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
     await db.log_photo(111, 1, file_id="AgACAgIAA_photo_123")
     checkin = await db.get_checkin(111, 1)
@@ -267,7 +267,7 @@ async def test_log_photo(db):
 
 @pytest.mark.asyncio
 async def test_get_photo_file_ids(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
     await db.create_checkin(111, 7, "2026-04-21")
     await db.create_checkin(111, 14, "2026-04-28")
@@ -287,7 +287,7 @@ async def test_get_photo_file_ids(db):
 
 @pytest.mark.asyncio
 async def test_get_photo_file_ids_empty(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     photos = await db.get_photo_file_ids(111)
     assert photos == []
 
@@ -295,7 +295,7 @@ async def test_get_photo_file_ids_empty(db):
 @pytest.mark.asyncio
 async def test_get_photo_file_ids_excludes_no_photo(db):
     """Checkins without photos should not appear."""
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
     await db.create_checkin(111, 2, "2026-04-16")
     # Only log photo for day 1
@@ -311,7 +311,7 @@ async def test_get_photo_file_ids_excludes_no_photo(db):
 @pytest.mark.asyncio
 async def test_check_completion(db):
     """When all 6 tasks are done, completed_at should be set."""
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
 
     # Do all tasks
@@ -330,7 +330,7 @@ async def test_check_completion(db):
 @pytest.mark.asyncio
 async def test_check_completion_not_complete(db):
     """If any task missing, completed_at should remain None."""
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.create_checkin(111, 1, "2026-04-15")
     await db.log_workout(111, 1, "run", "outdoor")
     # Missing: second workout, water, diet, reading, photo
@@ -343,7 +343,7 @@ async def test_check_completion_not_complete(db):
 
 @pytest.mark.asyncio
 async def test_set_current_book(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.set_current_book(111, "Atomic Habits", started_day=1)
     user = await db.get_user(111)
     assert user["current_book"] == "Atomic Habits"
@@ -351,7 +351,7 @@ async def test_set_current_book(db):
 
 @pytest.mark.asyncio
 async def test_finish_book(db):
-    await db.add_user(111, "Bryan")
+    await db.add_user(111, "Alice")
     await db.set_current_book(111, "Atomic Habits", started_day=1)
     await db.finish_book(111, finished_day=10)
 
@@ -434,13 +434,13 @@ async def test_resolve_feedback(db):
 
 @pytest.mark.asyncio
 async def test_log_event_basic(db):
-    await db.log_event(111, "Bryan", "water_tap", "cups=5")
+    await db.log_event(111, "Alice", "water_tap", "cups=5")
     async with db._conn.execute("SELECT * FROM event_log") as cur:
         rows = await cur.fetchall()
     assert len(rows) == 1
     assert rows[0]["event_type"] == "water_tap"
     assert rows[0]["user_id"] == 111
-    assert rows[0]["user_name"] == "Bryan"
+    assert rows[0]["user_name"] == "Alice"
     assert rows[0]["event_detail"] == "cups=5"
 
 
@@ -456,7 +456,7 @@ async def test_log_event_with_latency(db):
 
 @pytest.mark.asyncio
 async def test_log_event_with_error(db):
-    await db.log_event(111, "Bryan", "error", error="Something broke")
+    await db.log_event(111, "Alice", "error", error="Something broke")
     async with db._conn.execute("SELECT * FROM event_log") as cur:
         rows = await cur.fetchall()
     assert len(rows) == 1
@@ -469,7 +469,7 @@ async def test_log_event_never_raises(db):
     # Close the connection to force an error
     await db.close()
     # This should NOT raise
-    await db.log_event(111, "Bryan", "water_tap")
+    await db.log_event(111, "Alice", "water_tap")
 
 
 @pytest.mark.asyncio
@@ -482,10 +482,10 @@ async def test_get_event_log_health_empty(db):
 
 @pytest.mark.asyncio
 async def test_get_event_log_health_with_data(db):
-    await db.log_event(111, "Bryan", "water_tap", "cups=5")
-    await db.log_event(222, "Kat", "diet_toggle", "on=True")
-    await db.log_event(111, "Bryan", "ai_chat", "msg_len=20", latency_ms=800)
-    await db.log_event(111, "Bryan", "ai_chat", "msg_len=15", latency_ms=1200)
+    await db.log_event(111, "Alice", "water_tap", "cups=5")
+    await db.log_event(222, "Bob", "diet_toggle", "on=True")
+    await db.log_event(111, "Alice", "ai_chat", "msg_len=20", latency_ms=800)
+    await db.log_event(111, "Alice", "ai_chat", "msg_len=15", latency_ms=1200)
     await db.log_event(None, None, "error", error="test error")
 
     health = await db.get_event_log_health()

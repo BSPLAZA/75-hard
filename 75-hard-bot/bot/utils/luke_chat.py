@@ -7,12 +7,12 @@ from datetime import date, datetime, timedelta
 
 import anthropic
 
-from bot.config import ANTHROPIC_API_KEY, CHALLENGE_START_DATE
+from bot.config import ANTHROPIC_API_KEY, CHALLENGE_START_DATE, ORGANIZER
 from bot.utils.progress import today_et, get_day_number, get_current_challenge_day, is_all_complete, get_missing_tasks
 
 logger = logging.getLogger(__name__)
 
-LUKE_CHAT_SYSTEM = """You are Luke, the accountability bot for a 5-person 75 Hard challenge. You're chatting with a participant in DMs.
+LUKE_CHAT_SYSTEM = f"""You are Luke, the accountability bot for a 5-person 75 Hard challenge. You're chatting with a participant in DMs.
 
 THE CHALLENGE RULES (you enforce these):
 1. Two workouts per day, one indoor one outdoor. Duration is being finalized by the group.
@@ -21,7 +21,7 @@ THE CHALLENGE RULES (you enforce these):
 4. Read 10 pages of non-fiction every day.
 5. Take a progress photo every day.
 
-Miss any single task on any single day = elimination. No exceptions unless Bryan (the organizer) grants grace for bot issues.
+Miss any single task on any single day = elimination. No exceptions unless {ORGANIZER} (the organizer) grants grace for bot issues.
 
 STAKES:
 - $75 buy-in per person. $375 total prize pool.
@@ -42,7 +42,7 @@ PRIVACY:
 - Progress photos are private. Never mention or describe anyone's photos.
 - You're talking to one person. Be personal.
 
-ESCALATION - flag these to Bryan by logging as feedback type "escalation":
+ESCALATION - flag these to {ORGANIZER} by logging as feedback type "escalation":
 - Someone hasn't checked in for 2+ days and hasn't said anything
 - Someone asks to change their diet for a weak reason
 - Someone seems like they're gaming the system (logging tasks they didn't do)
@@ -92,7 +92,7 @@ BOOKS (search-confirm-save):
 
 WHAT YOU CAN'T DO:
 - Eliminate or redeem people (they use /fail and /redeem)
-- Change the rules (only Bryan can)
+- Change the rules (only {ORGANIZER} can)
 - Access or share other people's progress photos
 
 IMAGES:
@@ -308,11 +308,11 @@ TOOLS = [
     },
     {
         "name": "escalate_to_admin",
-        "description": "Flag a concern to Bryan (the organizer). Use when: someone hasn't checked in for 2+ days, someone wants to change diet for a weak reason, suspected gaming, someone is upset/wants to quit, or technical issues affecting multiple people.",
+        "description": "Flag a concern to the organizer. Use when: someone hasn't checked in for 2+ days, someone wants to change diet for a weak reason, suspected gaming, someone is upset/wants to quit, or technical issues affecting multiple people.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "reason": {"type": "string", "description": "Why this needs Bryan's attention"},
+                "reason": {"type": "string", "description": "Why this needs the organizer's attention"},
                 "user_name": {"type": "string", "description": "Who it's about (if applicable)"},
             },
             "required": ["reason"],
@@ -707,7 +707,7 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
         reason = tool_input.get("reason", "No reason given")
         user_name = tool_input.get("user_name", "unknown")
         await db.add_feedback(user_id, "escalation", f"[{user_name}] {reason}", f"day {day}")
-        # Also try to DM Bryan directly
+        # Also try to DM the admin directly
         try:
             import httpx
             from bot.config import ADMIN_USER_ID
@@ -723,7 +723,7 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
                     )
         except Exception:
             pass
-        return f"Flagged to Bryan: {reason}"
+        return f"Flagged to {ORGANIZER}: {reason}"
 
     elif tool_name == "get_transformation":
         photos = await db.get_photo_file_ids(user_id)

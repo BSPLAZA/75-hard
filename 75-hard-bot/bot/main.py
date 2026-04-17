@@ -12,7 +12,7 @@ from telegram.ext import (
     filters,
 )
 
-from bot.config import BOT_TOKEN, DATABASE_PATH, GROUP_CHAT_ID, PARTICIPANTS
+from bot.config import BOT_TOKEN, DATABASE_PATH, GROUP_CHAT_ID, ORGANIZER, PARTICIPANTS
 from bot.database import Database
 from bot.handlers.admin import get_admin_handlers, get_fail_handler, get_redeem_handler
 from bot.handlers.transformation import get_transformation_handler, get_timelapse_handler
@@ -166,12 +166,12 @@ def main() -> None:
 
     PRIVATE_BOT_REPLY_NEW = (
         "👋 this is a private accountability bot for a closed 75 Hard challenge.\n\n"
-        "if Bryan invited you, type /start to begin onboarding.\n\n"
+        f"if {ORGANIZER} invited you, type /start to begin onboarding.\n\n"
         "if not — sorry, nothing for you here."
     )
     PRIVATE_BOT_REPLY_LONG = (
         "this is a private bot for a closed 75 Hard challenge — you're not on the roster. "
-        "if you think you should be, ask Bryan to add your name."
+        f"if you think you should be, ask {ORGANIZER} to add your name."
     )
 
     async def combined_text_handler(update: Update, context):

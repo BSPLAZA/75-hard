@@ -19,9 +19,13 @@ from datetime import timedelta
 
 from bot.config import (
     ADMIN_USER_ID,
+    ALREADY_PAID,
+    BUY_IN,
     CHALLENGE_DAYS,
     CHALLENGE_START_DATE,
+    ORGANIZER,
     PARTICIPANTS,
+    VENMO_USERNAME,
 )
 from bot.utils.books import fetch_book_cover
 from bot.utils.progress import today_et, get_day_number
@@ -42,13 +46,6 @@ CB_LOCKED_IN = "onboard_locked_in"
 CB_NOT_FOR_ME = "onboard_not_for_me"
 CB_BOOK_LATER = "onboard_book_later"
 CB_PAID = "onboard_paid"
-
-# Users who don't need to pay
-ALREADY_PAID = ["Yumna"]
-ORGANIZER = "Bryan"
-
-VENMO_USERNAME = "bryanedit"
-BUY_IN = 75
 
 
 def _fuzzy_match(name: str, candidates: list[str]) -> str | None:
@@ -146,8 +143,8 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     matched = _fuzzy_match(typed_name, PARTICIPANTS)
 
     if not matched:
-        # Capture identity even on rejection so we can DM the user later if Bryan
-        # adds them to the roster — otherwise we lose their telegram_id forever.
+        # Capture identity even on rejection so we can DM the user later if the
+        # organizer adds them to the roster — otherwise we lose their telegram_id forever.
         u = update.effective_user
         logger.warning(
             "ONBOARDING_NAME_REJECTED typed=%r chat_id=%d username=%s first=%s last=%s",
@@ -170,7 +167,7 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Hmm, I don't see that name on the list.\n\n"
             "The current squad is: " + ", ".join(PARTICIPANTS) + "\n\n"
             "If that's you, try typing just your first name. "
-            "If you're new, ask Bryan to add you."
+            f"If you're new, ask {ORGANIZER} to add you."
         )
         return AWAITING_NAME
 
@@ -393,7 +390,7 @@ async def payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await db._conn.commit()
 
-    await query.edit_message_text("💰 Payment noted — Bryan will verify.")
+    await query.edit_message_text(f"💰 Payment noted — {ORGANIZER} will verify.")
     await _finalize_and_invite(query.from_user.id, matched, context)
     return ConversationHandler.END
 
@@ -455,7 +452,7 @@ async def _finalize_and_invite(user_id, matched, context):
         except Exception:
             pass
 
-        # Notify Bryan so he can manually add to the group chat
+        # Notify the organizer so they can manually add the user to the group chat
         try:
             await context.bot.send_message(
                 chat_id=ADMIN_USER_ID,

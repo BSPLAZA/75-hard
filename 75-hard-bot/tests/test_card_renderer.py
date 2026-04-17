@@ -32,11 +32,11 @@ def test_render_card_empty():
 
 def test_render_card_partial():
     checkins = [
-        _make_checkin_row("Bryan", workout_1_done=1, water_cups=6),
+        _make_checkin_row("Alice", workout_1_done=1, water_cups=6),
     ]
     text = render_card(day_number=3, active_count=5, prize_pool=375, checkins=checkins)
     assert "DAY 3 / 75" in text
-    assert "Bryan" in text
+    assert "Alice" in text
     # Workout 1 done => +, workout 2 not done => dot
     assert "+" in text
     # Should NOT have a star
@@ -45,30 +45,30 @@ def test_render_card_partial():
 
 def test_render_card_all_complete_star():
     checkins = [
-        _make_checkin_row("Kat", 1, 1, 16, 1, 1, 1),
+        _make_checkin_row("Bob", 1, 1, 16, 1, 1, 1),
     ]
     text = render_card(day_number=10, active_count=3, prize_pool=225, checkins=checkins)
-    assert "Kat" in text
+    assert "Bob" in text
     assert "*" in text  # star marker for complete
 
 
 def test_render_card_not_still_standing_when_partial():
     """When not all participants are complete, no stars for incomplete users."""
     checkins = [
-        _make_checkin_row("Bryan", 1, 1, 16, 1, 1, 1),
-        _make_checkin_row("Kat", 1, 0, 16, 1, 1, 1),
+        _make_checkin_row("Alice", 1, 1, 16, 1, 1, 1),
+        _make_checkin_row("Bob", 1, 0, 16, 1, 1, 1),
     ]
     text = render_card(day_number=5, active_count=2, prize_pool=150, checkins=checkins)
-    # Bryan should have star, Kat should not
+    # Alice should have star, Bob should not
     lines = text.split("\n")
     for line in lines:
-        if "Kat" in line:
+        if "Bob" in line:
             assert "*" not in line
 
 
 def test_render_card_has_column_header():
     text = render_card(day_number=1, active_count=1, prize_pool=75, checkins=[
-        _make_checkin_row("Dev"),
+        _make_checkin_row("Eve"),
     ])
     assert "WORK" in text
     assert "WATER" in text
@@ -77,7 +77,7 @@ def test_render_card_has_column_header():
 
 def test_render_card_has_weekday():
     text = render_card(day_number=1, active_count=1, prize_pool=75, checkins=[
-        _make_checkin_row("Dev"),
+        _make_checkin_row("Eve"),
     ])
     # Day 1 = April 15, 2026 = Wednesday
     assert "Wednesday" in text

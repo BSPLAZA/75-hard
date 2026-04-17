@@ -1,4 +1,4 @@
-"""Always-on agent daemon that triages feedback and reports to Bryan."""
+"""Always-on agent daemon that triages feedback and reports to the organizer."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ logger = logging.getLogger("agent.daemon")
 POLL_INTERVAL = 300  # 5 minutes
 PATCHES_DIR = Path(__file__).parent / "patches"
 
-# Map feedback item IDs to their triage results so we can act on Bryan's replies
+# Map feedback item IDs to their triage results so we can act on the organizer's replies
 _pending_approvals: dict[int, tuple[dict, dict]] = {}  # msg_id -> (item, triage)
 
 
@@ -34,7 +34,7 @@ _pending_approvals: dict[int, tuple[dict, dict]] = {}  # msg_id -> (item, triage
 
 
 async def send_telegram(text: str, *, reply_markup: dict | None = None) -> int | None:
-    """Send a message to Bryan via the Telegram Bot API.
+    """Send a message to the organizer via the Telegram Bot API.
 
     Returns the message_id of the sent message, or None on failure.
     """
@@ -100,7 +100,7 @@ SEVERITY_EMOJI = {
 
 
 async def send_triage_report(triage: dict, item: dict) -> int | None:
-    """Send a triage report to Bryan via Telegram. Returns message_id."""
+    """Send a triage report to the organizer via Telegram. Returns message_id."""
     emoji = SEVERITY_EMOJI.get(triage["severity"], "\u2753")
 
     parts = [
@@ -130,7 +130,7 @@ async def send_triage_report(triage: dict, item: dict) -> int | None:
 
 
 async def handle_approval(item: dict, triage: dict) -> None:
-    """Generate a patch and report back to Bryan."""
+    """Generate a patch and report back to the organizer."""
     await send_telegram(f"\U0001f527 Generating patch for #{item['id']}...")
 
     patch_content = await generate_patch(item, triage)
@@ -187,7 +187,7 @@ async def poll_feedback(db: Database) -> None:
 
 
 async def poll_replies() -> None:
-    """Check for Bryan's replies to triage reports."""
+    """Check for the organizer's replies to triage reports."""
     if not _pending_approvals:
         return
 
@@ -202,7 +202,7 @@ async def poll_replies() -> None:
         _update_offset = update["update_id"] + 1
 
         message = update.get("message", {})
-        # Only listen to Bryan
+        # Only listen to the organizer
         if message.get("from", {}).get("id") != ADMIN_USER_ID:
             continue
 

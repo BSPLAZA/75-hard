@@ -520,7 +520,7 @@ async def daily_backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 def schedule_jobs(job_queue) -> None:
     """Register all daily scheduled jobs.
 
-    Schedule (Bryan, 2026-04-16):
+    Schedule (decided 2026-04-16):
       7am  ET            morning card (greeting + yesterday recap + bookshelf + today)
       9am  ET            DM reminder for users with incomplete yesterday tasks
       12pm PT (3pm ET)   yesterday locks; admin warnings for incompletes

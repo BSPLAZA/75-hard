@@ -1,3 +1,5 @@
+from bot.config import ORGANIZER
+
 # Welcome / Onboarding
 WELCOME_GROUP = """👋 I'm the 75 Hard bot. I'll be tracking your challenge starting tomorrow.
 
@@ -16,7 +18,7 @@ Let's do this. 💪"""
 
 DM_REGISTRATION_ASK_NAME = "Welcome! What's your name? I'll match you to the participant list."
 DM_REGISTRATION_SUCCESS = "Welcome, {name}! You're registered for 75 Hard. I'll send you check-in prompts here and track your progress in the group."
-DM_REGISTRATION_NOT_FOUND = "I don't see that name on the participant list. Ask Bryan to add you."
+DM_REGISTRATION_NOT_FOUND = f"I don't see that name on the participant list. Ask {ORGANIZER} to add you."
 DM_REGISTRATION_ALREADY = "You're already registered, {name}! Nothing to do here."
 
 # Workout
@@ -59,13 +61,13 @@ ${returned} returned · ${remaining} stays in the prize pool
 Prize pool: ${pool} · {active} still standing"""
 
 # Feedback
-FEEDBACK_CONFIRM = "Got it — logged your {type}. Bryan will see it. 👍"
+FEEDBACK_CONFIRM = f"Got it — logged your {{type}}. {ORGANIZER} will see it. 👍"
 
 # Card
 CARD_EXPIRED = "This card has expired. Use today's card ☝️ or type /card to jump to it."
 
 # Pinned FAQ (the full rules + FAQ document)
-PINNED_FAQ = """📌 75 HARD — RULES & FAQ
+PINNED_FAQ = f"""📌 75 HARD — RULES & FAQ
 
 ━━━ THE RULES ━━━
 Every day for 75 days. Miss one task, you're out.
@@ -117,13 +119,13 @@ Q: What if I fail?
 A: DM me /fail. You'll get $1 back for each day completed. You can also /redeem once — pay remaining days + $50 to rejoin.
 
 Q: I have an idea or found a bug.
-A: /suggest [idea] or /bug [what happened] — both go straight to Bryan.
+A: /suggest [idea] or /bug [what happened] — both go straight to {ORGANIZER}.
 
 Q: Where is today's card?
 A: Type /card and I'll link you to it. It's also pinned each day.
 
 Q: What if the bot goes down?
-A: Bryan will fix it. Log your tasks when it's back up. Honor system in the meantime.
+A: {ORGANIZER} will fix it. Log your tasks when it's back up. Honor system in the meantime.
 
 ━━━ STAKES ━━━
 💰 $75 buy-in · prize pool grows when people fail

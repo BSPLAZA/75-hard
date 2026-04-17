@@ -11,7 +11,7 @@ from telegram.ext import (
     filters,
 )
 
-from bot.config import ADMIN_USER_ID, CHALLENGE_START_DATE
+from bot.config import ADMIN_USER_ID, CHALLENGE_START_DATE, ORGANIZER, VENMO_USERNAME
 from bot.handlers.daily_card import post_daily_card, refresh_card
 from bot.jobs.scheduler import nudge_job_et, nudge_job_pt, spicy_moment_job
 from bot.templates.messages import FAIL_CONFIRM, FAIL_DONE
@@ -365,7 +365,7 @@ async def redeem_start(
     context.user_data["redeem_remaining"] = remaining_days
 
     venmo_note = "75 Hard - Redemption"
-    venmo_deeplink = f"https://venmo.com/bryanedit?txn=pay&amount={total_cost}&note={venmo_note.replace(' ', '%20')}"
+    venmo_deeplink = f"https://venmo.com/{VENMO_USERNAME}?txn=pay&amount={total_cost}&note={venmo_note.replace(' ', '%20')}"
 
     await update.message.reply_text(
         f"REDEMPTION\n"
@@ -621,15 +621,15 @@ async def admin_test_digest_command(
 async def admin_test_transform_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Generate Bryan's transformation composite for testing."""
+    """Generate the organizer's transformation composite for testing."""
     if not _is_admin(update.effective_user.id):
         await _admin_reply(update, context, "Admin only.")
         return
     try:
         db = context.bot_data["db"]
 
-        # Find Bryan (or fall back to admin user)
-        user = await db.get_user_by_name("Bryan")
+        # Find the organizer (or fall back to admin user)
+        user = await db.get_user_by_name(ORGANIZER)
         if not user:
             user = await db.get_user(update.effective_user.id)
         if not user:
