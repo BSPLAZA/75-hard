@@ -321,9 +321,39 @@ TOOLS = [
 ]
 
 
-async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> str:
-    """Execute a tool call and return the result as a string."""
+async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, context=None) -> str:
+    """Execute a tool call and return the result as a string.
+
+    `context` is the python-telegram-bot ContextTypes.DEFAULT_TYPE, optional. When
+    present, tool handlers can fire group-chat easter eggs (squad complete, streaks,
+    etc) after a DB write. Optional so unit tests / scripts can call without the bot.
+    """
     day = await get_current_challenge_day(db)
+
+    async def _maybe_fire_completion_eggs(this_user_id: int, this_day: int):
+        """Fire shared easter eggs if context is available. Defensive — never raises."""
+        if context is None:
+            return
+        try:
+            from bot.utils.easter_eggs import fire_completion_easter_eggs
+            user_row = await db.get_user(this_user_id)
+            name = user_row["name"] if user_row else "someone"
+            await fire_completion_easter_eggs(context, db, this_user_id, name, this_day)
+        except Exception as e:
+            logger.warning("Failed to fire completion easter eggs from DM tool: %s", e)
+
+    async def _maybe_record_workout(this_user_id: int, this_day: int):
+        """Track workout time for the simultaneous-workout easter egg."""
+        if context is None:
+            return
+        try:
+            from bot.utils.easter_eggs import record_workout_time, check_simultaneous_workout
+            record_workout_time(this_user_id, this_day)
+            user_row = await db.get_user(this_user_id)
+            name = user_row["name"] if user_row else "someone"
+            await check_simultaneous_workout(context, this_user_id, name, this_day)
+        except Exception as e:
+            logger.warning("Failed to fire workout easter eggs from DM tool: %s", e)
 
     if tool_name == "get_my_status":
         checkin = await db.get_checkin(user_id, day)
@@ -530,6 +560,9 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
         if not checkin:
             await db.create_checkin(user_id, day, today_et().isoformat())
         slot, just_completed = await db.log_workout(user_id, day, wtype, location)
+        await _maybe_record_workout(user_id, day)
+        if just_completed:
+            await _maybe_fire_completion_eggs(user_id, day)
         return f"REFRESH_CARD: Workout logged — {location} {wtype}, slot {slot}/2. {'Both done!' if slot == 2 else ''}"
 
     elif tool_name == "log_water_dm":
@@ -538,14 +571,19 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
         checkin = await db.get_checkin(user_id, day)
         if not checkin:
             await db.create_checkin(user_id, day, today_et().isoformat())
+        just_completed_any = False
         if mode == "set":
-            await db.set_water(user_id, day, cups)
+            jc = await db.set_water(user_id, day, cups)
+            just_completed_any = just_completed_any or jc
             new_count = cups
         else:
             for _ in range(cups):
-                new_count, _ = await db.increment_water(user_id, day)
+                new_count, jc = await db.increment_water(user_id, day)
+                just_completed_any = just_completed_any or jc
         checkin = await db.get_checkin(user_id, day)
         new_count = checkin["water_cups"] if checkin else 0
+        if just_completed_any:
+            await _maybe_fire_completion_eggs(user_id, day)
         return f"REFRESH_CARD: Water updated — {new_count}/16 cups"
 
     elif tool_name == "confirm_diet_dm":
@@ -553,13 +591,18 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int) -> s
         if not checkin:
             await db.create_checkin(user_id, day, today_et().isoformat())
             checkin = await db.get_checkin(user_id, day)
+        just_completed = False
         if not checkin["diet_done"]:
-            await db.toggle_diet(user_id, day)
+            _, just_completed = await db.toggle_diet(user_id, day)
+        if just_completed:
+            await _maybe_fire_completion_eggs(user_id, day)
         return "REFRESH_CARD: Diet confirmed for today"
 
     elif tool_name == "fix_water":
         cups = max(0, min(16, tool_input.get("cups", 0)))
-        await db.set_water(user_id, day, cups)
+        just_completed = await db.set_water(user_id, day, cups)
+        if just_completed:
+            await _maybe_fire_completion_eggs(user_id, day)
         return f"REFRESH_CARD: Water corrected to {cups}/16 cups"
 
     elif tool_name == "undo_workout":
@@ -751,6 +794,7 @@ async def chat_with_luke(
     user_id: int,
     image_b64: str | None = None,
     image_media_type: str = "image/jpeg",
+    context=None,
 ) -> dict:
     """Have a conversation with Luke. Returns {"text": str, "cover_url": str|None, "media": str|None}.
 
@@ -806,7 +850,7 @@ async def chat_with_luke(
             for block in response.content:
                 if block.type == "tool_use":
                     tools_called.append(block.name)
-                    result = await _execute_tool(block.name, block.input, db, user_id)
+                    result = await _execute_tool(block.name, block.input, db, user_id, context=context)
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,

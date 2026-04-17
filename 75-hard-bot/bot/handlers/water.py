@@ -8,7 +8,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 from bot.config import CB_WATER, CHALLENGE_START_DATE, WATER_GOAL
 from bot.handlers.daily_card import refresh_card, resolve_day_from_card
 from bot.templates.messages import WATER_FULL, WATER_POPUP, WATER_SET
-from bot.utils.easter_eggs import check_first_completion
+from bot.utils.easter_eggs import fire_completion_easter_eggs
 from bot.utils.progress import today_et, get_day_number
 
 
@@ -45,7 +45,7 @@ async def water_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if just_completed:
         user_obj = await db.get_user(update.effective_user.id)
         name = user_obj["name"] if user_obj else update.effective_user.first_name
-        await check_first_completion(context, name, day_number)
+        await fire_completion_easter_eggs(context, db, update.effective_user.id, name, day_number)
 
 
 async def water_set_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -82,7 +82,7 @@ async def water_set_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if just_completed:
         name = user["name"] if user else update.effective_user.first_name
-        await check_first_completion(context, name, day_number)
+        await fire_completion_easter_eggs(context, db, update.effective_user.id, name, day_number)
 
 
 def get_water_callback_handler() -> CallbackQueryHandler:

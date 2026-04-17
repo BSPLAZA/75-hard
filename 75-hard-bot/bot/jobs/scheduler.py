@@ -456,6 +456,55 @@ async def noon_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 pass
 
 
+async def spicy_moment_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """9 PM ET -- ask Luke to find one spicy moment from today and post it.
+
+    Fires after most logging is done but while east coast is still awake. Posts
+    to the group only if the AI returns something interesting (not "NONE").
+    """
+    db = context.bot_data["db"]
+    chat_id = context.bot_data.get("group_chat_id")
+    if not chat_id:
+        return
+
+    from bot.utils.progress import get_current_challenge_day
+    day = await get_current_challenge_day(db)
+    if day < 1 or day > CHALLENGE_DAYS:
+        return
+
+    today_raw = await db.get_all_checkins_for_day(day)
+    today_dicts = [dict(c) for c in today_raw]
+    yesterday_dicts = None
+    if day > 1:
+        prev_raw = await db.get_all_checkins_for_day(day - 1)
+        yesterday_dicts = [dict(c) for c in prev_raw] if prev_raw else None
+
+    # Today's food summary across all users (bonus signal for the AI)
+    food_lines = []
+    for c in today_dicts:
+        try:
+            entries = await db.get_diet_entries(c["telegram_id"], day)
+            if not entries:
+                continue
+            short = [f"{e.get('entry_text','')[:40]}" for e in entries]
+            food_lines.append(f"  {c['name']}: " + "; ".join(short))
+        except Exception:
+            pass
+    food_summary = "\n".join(food_lines)
+
+    from bot.utils.luke_ai import generate_spicy_moment
+    start = time_mod.monotonic()
+    text = await generate_spicy_moment(day, today_dicts, yesterday_dicts, food_summary)
+    latency_ms = int((time_mod.monotonic() - start) * 1000)
+    await db.log_event(None, None, "ai_spicy", f"day={day} fired={'yes' if text else 'no'}", latency_ms=latency_ms)
+    if not text:
+        return
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=text)
+    except Exception as e:
+        logger.warning("Failed to post spicy moment: %s", e)
+
+
 async def daily_backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """3 AM ET -- Backup the database."""
     import shutil
@@ -499,6 +548,11 @@ def schedule_jobs(job_queue) -> None:
     )
     job_queue.run_daily(
         weekly_digest_job, time=time(20, 0, tzinfo=ET), name="weekly_digest"
+    )
+    # Spicy moment fires at 9pm ET — late enough that most logging is done,
+    # early enough that east coast is still awake to react.
+    job_queue.run_daily(
+        spicy_moment_job, time=time(21, 0, tzinfo=ET), name="spicy_moment"
     )
     job_queue.run_daily(
         daily_backup_job, time=time(3, 0, tzinfo=ET), name="daily_backup"

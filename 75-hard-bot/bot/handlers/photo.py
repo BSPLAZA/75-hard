@@ -7,7 +7,7 @@ from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, fil
 
 from bot.config import CB_PHOTO, CHALLENGE_START_DATE
 from bot.handlers.daily_card import refresh_card, resolve_day_from_card
-from bot.utils.easter_eggs import check_first_completion
+from bot.utils.easter_eggs import fire_completion_easter_eggs
 from bot.templates.messages import (
     PHOTO_ASK,
     PHOTO_NEED_PHOTO,
@@ -125,7 +125,7 @@ async def handle_dm_photo(
 
         if just_completed:
             name_for_egg = user["name"] if user else update.effective_user.first_name
-            await check_first_completion(context, name_for_egg, photo_day)
+            await fire_completion_easter_eggs(context, db, user_id, name_for_egg, photo_day)
         return
 
     # Path B: photo sent without opt-in — route to Luke with vision
@@ -143,7 +143,7 @@ async def handle_dm_photo(
 
     from bot.utils.luke_chat import chat_with_luke
     prompt = caption.strip() or "the user sent a photo with no caption. ask them what they'd like to do with it: save as their progress photo for today, or ask a question about it."
-    result = await chat_with_luke(prompt, db, user_id, image_b64=image_b64)
+    result = await chat_with_luke(prompt, db, user_id, image_b64=image_b64, context=context)
     if result.get("text"):
         await update.message.reply_text(result["text"])
 

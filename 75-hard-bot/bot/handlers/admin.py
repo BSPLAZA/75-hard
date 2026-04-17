@@ -13,7 +13,7 @@ from telegram.ext import (
 
 from bot.config import ADMIN_USER_ID, CHALLENGE_START_DATE
 from bot.handlers.daily_card import post_daily_card, refresh_card
-from bot.jobs.scheduler import nudge_job_et, nudge_job_pt
+from bot.jobs.scheduler import nudge_job_et, nudge_job_pt, spicy_moment_job
 from bot.templates.messages import FAIL_CONFIRM, FAIL_DONE
 from bot.utils.progress import today_et, get_day_number, get_current_challenge_day
 
@@ -550,6 +550,17 @@ async def admin_test_nudge_command(
     await _admin_reply(update, context, "Nudge triggered (ET + PT).")
 
 
+async def admin_test_spicy_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Manually fire today's spicy-moment job (also posts to group if non-NONE)."""
+    if not _is_admin(update.effective_user.id):
+        await _admin_reply(update, context, "Admin only.")
+        return
+    await spicy_moment_job(context)
+    await _admin_reply(update, context, "Spicy moment triggered. Check group for output (or 'NONE' = nothing posted).")
+
+
 async def admin_test_digest_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -955,6 +966,7 @@ def get_admin_handlers() -> list:
         CommandHandler("admin_test_recap", admin_test_recap_command),
         CommandHandler("admin_test_morning", admin_test_morning_command),
         CommandHandler("admin_test_nudge", admin_test_nudge_command),
+        CommandHandler("admin_test_spicy", admin_test_spicy_command),
         CommandHandler("admin_test_digest", admin_test_digest_command),
         CommandHandler("admin_feedback", admin_feedback_command),
         CommandHandler("admin_resolve", admin_resolve_command),

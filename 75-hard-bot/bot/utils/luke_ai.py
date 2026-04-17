@@ -202,6 +202,88 @@ async def generate_weekly_reflection(
         return None
 
 
+SPICY_MOMENT_SYSTEM = """You are Luke, the accountability bot for a 5-person 75 Hard challenge group chat.
+
+Your job: scan today's data and find ONE spicy moment worth highlighting. Spicy = surprising, funny, badass, dramatic, or shows real character. Examples:
+
+- someone did their workout at 5am
+- someone has a 3-day streak of being last to finish
+- someone crushed their protein goal by 100g
+- two people both ran outside in bad weather
+- someone backfilled at 11:58pm with seconds to spare
+- someone went from missing yesterday's water to nailing all 6 today
+- someone's been reading the same book for 14 days (slow reader callout)
+
+DO NOT highlight:
+- Routine completions ("X finished today!")
+- Anything you'd see in a normal status update
+- Fake-positive cheerleading
+
+Output rules:
+- ONE sentence. Maximum 25 words.
+- Casual, lowercase, text style. No em dashes. No semicolons. No corporate language.
+- Light swearing ok if it fits.
+- If nothing actually spicy stands out, output exactly: NONE"""
+
+
+async def generate_spicy_moment(
+    day_number: int,
+    today_checkins: list[dict],
+    yesterday_checkins: list[dict] | None,
+    food_log_summary: str = "",
+) -> str | None:
+    """Daily spicy-moment generator. Returns a single sentence or None."""
+    if not ANTHROPIC_API_KEY:
+        return None
+
+    from bot.utils.progress import is_all_complete, get_missing_tasks
+
+    def _format_day(day_num, ckins):
+        if not ckins:
+            return f"Day {day_num}: no data"
+        lines = [f"Day {day_num}:"]
+        for c in ckins:
+            tasks_done = []
+            if c.get("workout_1_done"):
+                tasks_done.append(f"workout1={c.get('workout_1_location','?')} {c.get('workout_1_type','?')}")
+            if c.get("workout_2_done"):
+                tasks_done.append(f"workout2={c.get('workout_2_location','?')} {c.get('workout_2_type','?')}")
+            tasks_done.append(f"water={c.get('water_cups',0)}/16")
+            if c.get("diet_done"):
+                tasks_done.append("diet=ok")
+            if c.get("reading_done"):
+                tasks_done.append(f"read='{c.get('book_title','?')}'")
+            if c.get("photo_done"):
+                tasks_done.append("photo=ok")
+            done_at = c.get("completed_at") or "incomplete"
+            lines.append(f"  {c.get('name','?')}: {', '.join(tasks_done)} | finished_at={done_at}")
+        return "\n".join(lines)
+
+    ctx_parts = [
+        _format_day(day_number, today_checkins),
+    ]
+    if yesterday_checkins:
+        ctx_parts.append(_format_day(day_number - 1, yesterday_checkins))
+    if food_log_summary:
+        ctx_parts.append(f"\nFood logs today:\n{food_log_summary}")
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model="claude-opus-4-7",
+            max_tokens=80,
+            system=SPICY_MOMENT_SYSTEM,
+            messages=[{"role": "user", "content": "\n\n".join(ctx_parts)}],
+        )
+        text = _clean_output(response.content[0].text).strip()
+        if text.upper() == "NONE" or len(text) < 5:
+            return None
+        return text
+    except Exception as e:
+        logger.error("Failed to generate spicy moment: %s", e)
+        return None
+
+
 async def generate_recap_caption(
     day_number: int,
     checkins: list[dict],

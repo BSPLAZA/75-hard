@@ -9,7 +9,7 @@ from bot.utils.progress import today_et
 from bot.config import CB_DIET
 from bot.handlers.daily_card import refresh_card, resolve_day_from_card
 from bot.templates.messages import DIET_OFF, DIET_ON
-from bot.utils.easter_eggs import check_first_completion
+from bot.utils.easter_eggs import fire_completion_easter_eggs
 
 
 async def diet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -42,7 +42,7 @@ async def diet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if just_completed:
         name = user["name"] if user else update.effective_user.first_name
-        await check_first_completion(context, name, day_number)
+        await fire_completion_easter_eggs(context, db, update.effective_user.id, name, day_number)
 
 
 def get_diet_callback_handler() -> CallbackQueryHandler:

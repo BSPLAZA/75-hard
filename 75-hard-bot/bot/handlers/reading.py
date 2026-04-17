@@ -9,7 +9,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 from bot.config import CB_READ, CB_READ_NEW, CB_READ_SAME, CHALLENGE_START_DATE
 from bot.handlers.daily_card import refresh_card, resolve_day_from_card
 from bot.utils.books import fetch_book_cover
-from bot.utils.easter_eggs import check_first_completion
+from bot.utils.easter_eggs import fire_completion_easter_eggs
 from bot.templates.messages import (
     READ_ALREADY_DONE,
     READ_ASK_BOOK,
@@ -58,7 +58,7 @@ async def read_start_callback(
         await refresh_card(context, day_number)
         await db.log_event(user_id, user["name"], "reading_log", current_book)
         if just_completed:
-            await check_first_completion(context, user["name"], day_number)
+            await fire_completion_easter_eggs(context, db, user_id, user["name"], day_number)
 
         # DM them asking for an optional quote
         try:
@@ -228,7 +228,7 @@ async def handle_dm_text(
         await refresh_card(context, day_number)
 
         if just_completed:
-            await check_first_completion(context, name, day_number)
+            await fire_completion_easter_eggs(context, db, update.effective_user.id, name, day_number)
 
         return True
 

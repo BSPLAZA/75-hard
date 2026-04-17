@@ -230,7 +230,7 @@ def main() -> None:
                 await update.message.reply_text(reply)
                 return
 
-            result = await chat_with_luke(message, db, user_id)
+            result = await chat_with_luke(message, db, user_id, context=context)
 
             # Handle media requests (transformation/timelapse)
             if result.get("media") == "transformation":

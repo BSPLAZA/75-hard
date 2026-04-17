@@ -1,9 +1,24 @@
 """Easter egg messages and surprise notifications for the 75 Hard bot."""
 
 import html
+import logging
 from datetime import datetime, timezone, timedelta
 
 from telegram.ext import ContextTypes
+
+logger = logging.getLogger(__name__)
+
+
+def _is_all_complete(c: dict) -> bool:
+    """Local copy to avoid circular imports with utils.progress."""
+    return bool(
+        c.get("workout_1_done")
+        and c.get("workout_2_done")
+        and (c.get("water_cups") or 0) >= 16
+        and c.get("diet_done")
+        and c.get("reading_done")
+        and c.get("photo_done")
+    )
 
 # ── Day Milestones ──────────────────────────────────────────────────────
 
@@ -148,3 +163,173 @@ async def check_simultaneous_workout(
 
         # Only announce one pair per workout log to avoid spam
         return
+
+
+# ── Streak Milestones ───────────────────────────────────────────────────
+
+STREAK_MILESTONES = {
+    7: "🔥 {name} just sealed a 7-day perfect streak. one whole week, no slip-ups.",
+    14: "🔥🔥 {name} on a 14-day streak. two weeks of doing all 6, every single day.",
+    21: "🔥🔥🔥 {name} hit 21 days perfect. that's the habit-formation threshold.",
+    30: "💎 {name} just locked in a 30-day perfect streak. unreal.",
+    50: "💎💎 {name} on a 50-day streak. half the people who started 75 hard would have quit by now.",
+    75: "👑 {name} — 75 perfect days. the whole damn challenge. legendary.",
+}
+
+
+async def check_streak_milestone(
+    context: ContextTypes.DEFAULT_TYPE,
+    db,
+    user_id: int,
+    user_name: str,
+    day_number: int,
+) -> None:
+    """If this user just hit a streak milestone (7/14/21/30/50/75), announce it.
+
+    A "streak" = consecutive days, ending today, where the user completed all 6 tasks.
+    """
+    chat_id = context.bot_data.get("group_chat_id")
+    if not chat_id:
+        return
+
+    # Walk backwards from today, counting consecutive complete days
+    streak = 0
+    for d in range(day_number, 0, -1):
+        c = await db.get_checkin(user_id, d)
+        if not c:
+            break
+        if not _is_all_complete(dict(c)):
+            break
+        streak += 1
+
+    msg_template = STREAK_MILESTONES.get(streak)
+    if not msg_template:
+        return
+
+    safe_name = html.escape(user_name)
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=msg_template.format(name=safe_name),
+        )
+    except Exception:
+        pass
+
+
+# ── Comeback ────────────────────────────────────────────────────────────
+
+async def check_comeback(
+    context: ContextTypes.DEFAULT_TYPE,
+    db,
+    user_id: int,
+    user_name: str,
+    day_number: int,
+) -> None:
+    """If user completed today AND failed to complete yesterday → comeback shoutout."""
+    if day_number <= 1:
+        return
+
+    chat_id = context.bot_data.get("group_chat_id")
+    if not chat_id:
+        return
+
+    yesterday = await db.get_checkin(user_id, day_number - 1)
+    if not yesterday or _is_all_complete(dict(yesterday)):
+        return  # no yesterday data, or yesterday was already complete (no comeback)
+
+    safe_name = html.escape(user_name)
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"💪 {safe_name} bounced back today after missing some of yesterday's tasks. that's the energy.",
+        )
+    except Exception:
+        pass
+
+
+# ── Squad Complete ──────────────────────────────────────────────────────
+
+# Track which days we've already announced squad-complete to avoid double-firing
+_squad_announced_days: set[int] = set()
+
+
+async def check_squad_complete(
+    context: ContextTypes.DEFAULT_TYPE,
+    db,
+    day_number: int,
+) -> None:
+    """If every active user has completed today, announce it (once per day)."""
+    if day_number in _squad_announced_days:
+        return
+
+    chat_id = context.bot_data.get("group_chat_id")
+    if not chat_id:
+        return
+
+    active_users = await db.get_active_users()
+    checkins = await db.get_all_checkins_for_day(day_number)
+    if not checkins or not active_users:
+        return
+
+    completed = [c for c in checkins if _is_all_complete(dict(c))]
+    if len(completed) < len(active_users):
+        return
+
+    # Mark before sending so we don't re-fire on a race
+    _squad_announced_days.add(day_number)
+
+    # Format the time of the last completion in a friendly way
+    completers = sorted(
+        [dict(c) for c in checkins if dict(c).get("completed_at")],
+        key=lambda c: c["completed_at"] or "",
+    )
+    last_finish_iso = completers[-1].get("completed_at") if completers else None
+    time_str = ""
+    if last_finish_iso:
+        try:
+            import pytz as _pytz
+            ET = _pytz.timezone("US/Eastern")
+            ts = datetime.fromisoformat(last_finish_iso.replace("Z", "+00:00"))
+            ts_et = ts.astimezone(ET)
+            time_str = f" — locked in by {ts_et.strftime('%-I:%M %p')} ET"
+        except Exception:
+            time_str = ""
+
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"🎯 SQUAD COMPLETE — Day {day_number}{time_str}. all 6 tasks, all 4 of you. let's fucking go.",
+        )
+    except Exception:
+        pass
+
+
+# ── One-stop entry point ────────────────────────────────────────────────
+
+async def fire_completion_easter_eggs(
+    context: ContextTypes.DEFAULT_TYPE,
+    db,
+    user_id: int,
+    user_name: str,
+    day_number: int,
+) -> None:
+    """Call from anywhere a user just completed all 6 tasks (just_completed=True).
+
+    Bundles squad-complete (highest priority), first-finisher, streak, and comeback.
+    Squad-complete suppresses first-finisher (they don't co-occur cleanly).
+    """
+    # Squad complete checks if EVERYONE is done — fire first, since it's the headline
+    active_users = await db.get_active_users()
+    checkins = await db.get_all_checkins_for_day(day_number)
+    completed = [c for c in checkins if _is_all_complete(dict(c))]
+    is_squad_complete = active_users and len(completed) >= len(active_users)
+
+    if is_squad_complete:
+        await check_squad_complete(context, db, day_number)
+    else:
+        # First-finisher only fires when count == 1
+        await check_first_completion(context, user_name, day_number)
+
+    # These can stack on top either way
+    await check_streak_milestone(context, db, user_id, user_name, day_number)
+    await check_comeback(context, db, user_id, user_name, day_number)

@@ -25,8 +25,8 @@ from bot.templates.messages import (
     WORKOUT_WRONG_LOCATION,
 )
 from bot.utils.easter_eggs import (
-    check_first_completion,
     check_simultaneous_workout,
+    fire_completion_easter_eggs,
     record_workout_time,
 )
 from bot.utils.progress import today_et, get_day_number
@@ -138,7 +138,7 @@ async def workout_quick_callback(
 
     await check_simultaneous_workout(context, update.effective_user.id, name, day_number)
     if just_completed:
-        await check_first_completion(context, name, day_number)
+        await fire_completion_easter_eggs(context, db, update.effective_user.id, name, day_number)
 
 
 async def workout_start_callback(
@@ -325,7 +325,7 @@ async def workout_location_callback(
     # Easter eggs
     await check_simultaneous_workout(context, update.effective_user.id, name, day_number)
     if just_completed:
-        await check_first_completion(context, name, day_number)
+        await fire_completion_easter_eggs(context, db, update.effective_user.id, name, day_number)
 
 
 async def workout_undo_command(
