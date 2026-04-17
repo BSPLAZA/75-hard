@@ -189,6 +189,16 @@ def main() -> None:
             message = update.message.text.strip()
             if len(message) < 2:
                 return
+            # Hard cap to bound Anthropic input tokens and prevent runaway cost
+            # from a single oversized DM (legit user messages are ≤ 500 chars).
+            if len(message) > 2000:
+                message = message[:2000]
+                try:
+                    await update.message.reply_text(
+                        "(your message was long, truncated to 2000 chars)"
+                    )
+                except Exception:
+                    pass
 
             db = context.bot_data["db"]
             user_id = update.effective_user.id
