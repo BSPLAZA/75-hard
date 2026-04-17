@@ -139,6 +139,7 @@ class Database:
             "ALTER TABLE users ADD COLUMN diet_plan TEXT",
             "ALTER TABLE users ADD COLUMN redeemed INTEGER DEFAULT 0",
             "ALTER TABLE users ADD COLUMN redemption_fee INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN start_day INTEGER DEFAULT 1",
             "ALTER TABLE books ADD COLUMN cover_url TEXT",
             "CREATE TABLE IF NOT EXISTS bot_settings (key TEXT PRIMARY KEY, value TEXT)",
         ]
@@ -148,6 +149,18 @@ class Database:
                 await self._conn.commit()
             except Exception:
                 pass
+
+    async def set_user_start_day(self, telegram_id: int, start_day: int) -> None:
+        """Set when this user's personal Day 1 is (in global day numbering).
+
+        Default is 1 (joined at challenge start). Late joiners get a higher value
+        so they can be tracked through their own 75-day window.
+        """
+        await self._conn.execute(
+            "UPDATE users SET start_day = ? WHERE telegram_id = ?",
+            (start_day, telegram_id),
+        )
+        await self._conn.commit()
 
     async def get_setting(self, key: str) -> str | None:
         async with self._conn.execute(

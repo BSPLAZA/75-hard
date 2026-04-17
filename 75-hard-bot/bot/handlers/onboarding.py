@@ -12,8 +12,16 @@ from telegram.ext import (
     filters,
 )
 
-from bot.config import PARTICIPANTS
+from datetime import timedelta
+
+from bot.config import (
+    ADMIN_USER_ID,
+    CHALLENGE_DAYS,
+    CHALLENGE_START_DATE,
+    PARTICIPANTS,
+)
 from bot.utils.books import fetch_book_cover
+from bot.utils.progress import today_et, get_day_number
 from bot.templates.messages import (
     WELCOME_ALL_REGISTERED,
     WELCOME_GROUP,
@@ -181,6 +189,14 @@ async def commitment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await db.add_user(query.from_user.id, matched)
         await db.register_dm(query.from_user.id)
 
+    # If they're joining after Day 1, anchor their personal Day 1 to today (in
+    # global day numbering) so we can track their 75-day window separately.
+    current_day = get_day_number(CHALLENGE_START_DATE, today_et())
+    if current_day > 1:
+        user_now = await db.get_user_by_name(matched)
+        if user_now:
+            await db.set_user_start_day(user_now["telegram_id"], current_day)
+
     # Ask about diet
     await query.edit_message_text(
         "🍽️ WHAT'S YOUR DIET?\n"
@@ -343,6 +359,51 @@ async def _finalize_and_invite(user_id, matched, context):
 
     await context.bot.send_message(chat_id=user_id, text=text)
 
+    # Late-joiner disclaimer + admin alert
+    start_day = (user["start_day"] if user and "start_day" in user.keys() else 1) or 1
+    if start_day > 1:
+        global_finish = CHALLENGE_START_DATE + timedelta(days=CHALLENGE_DAYS - 1)
+        personal_start = CHALLENGE_START_DATE + timedelta(days=start_day - 1)
+        personal_finish = personal_start + timedelta(days=CHALLENGE_DAYS - 1)
+        offset = start_day - 1
+        disclaimer = (
+            "⚠️ HEADS UP — LATE START\n"
+            "\n"
+            f"You're joining {offset} day{'s' if offset != 1 else ''} into the challenge.\n"
+            "To do the full 75 days, you'll keep going for\n"
+            f"{offset} day{'s' if offset != 1 else ''} after the group finishes.\n"
+            "\n"
+            f"Group finishes: {global_finish.strftime('%B %d, %Y')}\n"
+            f"You finish:     {personal_finish.strftime('%B %d, %Y')}\n"
+            "\n"
+            f"Today is the group's Day {start_day}, but for you\n"
+            "it's Day 1. The daily card and chat will show the\n"
+            "group day number — just remember to count yours\n"
+            f"from today ({personal_start.strftime('%B %d')}).\n"
+            "\n"
+            "Let's go. 💪"
+        )
+        try:
+            await context.bot.send_message(chat_id=user_id, text=disclaimer)
+        except Exception:
+            pass
+
+        # Notify Bryan so he can manually add to the group chat
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_USER_ID,
+                text=(
+                    f"🆕 LATE JOINER REGISTERED\n"
+                    f"\n"
+                    f"{matched} just finished onboarding (start_day={start_day}, "
+                    f"finish={personal_finish.strftime('%B %d')}).\n"
+                    f"\n"
+                    f"Action needed: manually add @{matched.lower()} to the group chat."
+                ),
+            )
+        except Exception:
+            pass
+
     # Send invite link
     invite_link = context.bot_data.get("group_invite_link")
     if invite_link:
@@ -359,8 +420,23 @@ async def _finalize_and_invite(user_id, matched, context):
 
 
 async def _check_all_joined(context):
-    """If all 5 are registered, celebrate in the group."""
+    """If all participants are registered AND we haven't celebrated yet, celebrate in the group.
+
+    Gated by the all_joined_announced setting so late joiners don't re-trigger
+    the fanfare every time someone new finishes onboarding.
+    """
     db = context.bot_data["db"]
+
+    already_announced = await db.get_setting("all_joined_announced")
+    if already_announced:
+        return
+
+    # Skip the squad-complete celebration if the challenge is already in progress —
+    # late joiners shouldn't trigger a re-announcement.
+    current_day = get_day_number(CHALLENGE_START_DATE, today_et())
+    if current_day > 1:
+        return
+
     users = await db.get_all_users()
     registered = [u for u in users if u["dm_registered"]]
 
