@@ -164,10 +164,14 @@ def main() -> None:
     # Text handlers — custom workout name (group), reading flow (DM), and AI chat (DM)
     from bot.utils.luke_chat import chat_with_luke
 
-    PRIVATE_BOT_REPLY = (
-        "this is a private accountability bot for a closed 75 Hard challenge. "
-        "if you were supposed to be in this group, ask the organizer to add you. "
-        "otherwise, sorry — nothing for you here."
+    PRIVATE_BOT_REPLY_NEW = (
+        "👋 this is a private accountability bot for a closed 75 Hard challenge.\n\n"
+        "if Bryan invited you, type /start to begin onboarding.\n\n"
+        "if not — sorry, nothing for you here."
+    )
+    PRIVATE_BOT_REPLY_LONG = (
+        "this is a private bot for a closed 75 Hard challenge — you're not on the roster. "
+        "if you think you should be, ask Bryan to add your name."
     )
 
     async def combined_text_handler(update: Update, context):
@@ -220,7 +224,10 @@ def main() -> None:
                     )
                 except Exception:
                     pass
-                await update.message.reply_text(PRIVATE_BOT_REPLY)
+                # Short messages look like onboarding attempts — point to /start.
+                # Long messages are conversational; gently turn them away.
+                reply = PRIVATE_BOT_REPLY_NEW if len(message) <= 40 else PRIVATE_BOT_REPLY_LONG
+                await update.message.reply_text(reply)
                 return
 
             result = await chat_with_luke(message, db, user_id)

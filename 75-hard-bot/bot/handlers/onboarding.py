@@ -68,12 +68,56 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     db = context.bot_data["db"]
     user = await db.get_user(update.effective_user.id)
+
+    # Resume path: user is already dm_registered but onboarding was interrupted
+    # (state lost on deploy, or they stopped mid-flow). Route them to the first
+    # missing piece instead of bouncing them with "you're already registered."
     if user and user["dm_registered"]:
-        await update.message.reply_text(
-            f"You're already registered, {user['name']}! "
-            f"Sit tight — you'll get a group invite once everything is set."
-        )
-        return ConversationHandler.END
+        has_diet = bool(user["diet_plan"])
+        has_book = bool(user["current_book"])
+        has_paid = bool(user["paid"]) or user["name"] == ORGANIZER or user["name"] in ALREADY_PAID
+
+        if has_diet and has_book and has_paid:
+            await update.message.reply_text(
+                f"You're already registered, {user['name']}! "
+                f"Sit tight — you'll get a group invite once everything is set."
+            )
+            return ConversationHandler.END
+
+        # Partial registration — resume from the earliest missing step.
+        context.user_data["onboard_name"] = user["name"]
+        if not has_diet:
+            await update.message.reply_text(
+                f"Welcome back, {user['name']}. Let's pick up where you left off.\n\n"
+                "🍽️ WHAT'S YOUR DIET?\n\n"
+                "One of the rules is to follow a diet for all 75 days.\n"
+                "You choose what that means for you. Some examples:\n\n"
+                "• High protein (150g+ per day)\n"
+                "• Keto / low carb\n"
+                "• Calorie deficit (e.g. 1800 cal/day)\n"
+                "• Clean eating (no processed food)\n"
+                "• Vegetarian / vegan\n"
+                "• No sugar\n"
+                "• Custom (describe your own)\n\n"
+                "The only hard rules: no alcohol and no cheat meals.\n\n"
+                "Type your diet plan below:"
+            )
+            return AWAITING_DIET
+        if not has_book:
+            buttons = InlineKeyboardMarkup([[
+                InlineKeyboardButton("I'll decide later", callback_data=CB_BOOK_LATER),
+            ]])
+            await update.message.reply_text(
+                f"Welcome back, {user['name']}. Let's finish up.\n\n"
+                "📖 WHAT BOOK ARE YOU STARTING WITH?\n\n"
+                "You'll read 10 pages of non-fiction every day.\n"
+                "Type the title below, or tap the button if you\n"
+                "haven't picked one yet (you can always update later).",
+                reply_markup=buttons,
+            )
+            return AWAITING_BOOK
+        # Everything except payment → jump to payment step
+        return await _handle_payment_step(update.effective_user.id, user["name"], context)
 
     welcome = (
         "🔥 LOCKED IN — 75 HARD 🔥\n"
