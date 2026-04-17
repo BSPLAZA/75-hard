@@ -1,0 +1,34 @@
+# Secrets
+.env
+.env.*
+!.env.example
+!.env.test.example
+
+# Local DB and backups
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.backup*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+
+# Build artifacts
+*.egg-info/
+build/
+dist/
+
+# OS / editor cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Test renders / scratch
+test_recap*.png
+luke_profile.png
