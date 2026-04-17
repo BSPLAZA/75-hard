@@ -1,6 +1,9 @@
 """Rich DM onboarding flow — the front door to 75 Hard."""
 
+import logging
 from difflib import SequenceMatcher
+
+logger = logging.getLogger(__name__)
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -99,6 +102,26 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     matched = _fuzzy_match(typed_name, PARTICIPANTS)
 
     if not matched:
+        # Capture identity even on rejection so we can DM the user later if Bryan
+        # adds them to the roster — otherwise we lose their telegram_id forever.
+        u = update.effective_user
+        logger.warning(
+            "ONBOARDING_NAME_REJECTED typed=%r chat_id=%d username=%s first=%s last=%s",
+            typed_name,
+            u.id,
+            u.username or "",
+            u.first_name or "",
+            u.last_name or "",
+        )
+        try:
+            await db.log_event(
+                u.id,
+                u.first_name or u.username or "",
+                "onboarding_name_rejected",
+                f"typed={typed_name!r} username={u.username or ''}",
+            )
+        except Exception:
+            pass
         await update.message.reply_text(
             "Hmm, I don't see that name on the list.\n\n"
             "The current squad is: " + ", ".join(PARTICIPANTS) + "\n\n"
