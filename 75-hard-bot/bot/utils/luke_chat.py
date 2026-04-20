@@ -23,6 +23,14 @@ READ THESE FIRST. They override everything else below when they conflict.
 2. KEEP TEXT SHORT. Your visible text to the user must fit in under 150 tokens. Tool calls are separate — they don't count. If the user asks you to log 5 foods, reply with one short sentence ("logged — you're at Xg now") after making all 5 log_food calls, not a paragraph per food.
 
 3. GROUND TRUTH IS THE DB. Before claiming anything about logged state ("you already did X", "your total is Y", "yesterday you had Z"), call the appropriate tool FIRST. Your chat memory is short and wrong. The DB via tools is the only source of truth.
+
+4. NEVER DEFLECT TO BUTTONS. Never say "tap the 📸/📖/💧/🍽️/🏋️ button on the group card" or "I can't log X from DM" or "you'll need to use the button". You CAN log everything from DM via tools. Map intent to a tool and call it:
+   - "I read 10 pages" / "did my reading" → log_reading_dm (not deflect)
+   - "I drank water" / "+5 water" → log_water_dm
+   - "did my workout" → log_workout_dm
+   - "stayed on diet" → confirm_diet_dm
+   - photo with caption or no caption → request_backfill_photo with day_number=current_day, the photo handler auto-saves it
+   The ONLY thing that requires the group card buttons is nothing. There is no tool for the daily card photo button that you don't have via a DM tool.
 </critical_rules>
 
 THE CHALLENGE RULES (you enforce these):
@@ -277,6 +285,17 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
+        "name": "log_reading_dm",
+        "description": "Log today's reading task in one shot. Use when user says they read their pages today (e.g. 'I read 10 pages', 'finished today's reading', 'just read'). Updates daily_checkins.reading_done=1 and stores book + takeaway. Falls back to user's current_book if no book_title given. Don't tell user to tap any button — just call this.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "book_title": {"type": "string", "description": "Book title. Optional — if user doesn't say, leave empty and we'll use their current_book."},
+                "takeaway": {"type": "string", "description": "Optional one-line takeaway/quote/note from today's reading. Leave empty if user didn't share."},
+            },
+        },
+    },
+    {
         "name": "fix_water",
         "description": "Correct the user's water count for today. Use when user says they added too many waters, need to fix their water count, etc.",
         "input_schema": {
@@ -330,11 +349,11 @@ TOOLS = [
     },
     {
         "name": "request_backfill_photo",
-        "description": "Use when the user says they forgot to send a progress photo for a previous day and want to upload it now. This sets up a one-shot photo intake for the specified day; the next photo the user DMs will be saved to that day. Only allow yesterday (with Day 1 grace).",
+        "description": "Set up a one-shot photo intake. The NEXT photo the user DMs will be saved as their progress photo for the specified day. Pass day_number=current_day for TODAY's progress photo (most common case — when user asks about saving today's photo or sends a photo with no caption). Pass day_number=yesterday for a missed previous day. Allowed days: today, yesterday (noon PT cutoff), Day 1 (always graced).",
         "input_schema": {
             "type": "object",
             "properties": {
-                "day_number": {"type": "integer", "description": "The day this photo should be saved to (typically yesterday)"},
+                "day_number": {"type": "integer", "description": "Which day to save the photo as. Use TODAY for current-day progress photo, YESTERDAY for backfill."},
             },
             "required": ["day_number"],
         },
@@ -731,6 +750,24 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
         if just_completed:
             await _maybe_fire_completion_eggs(user_id, day)
         return "REFRESH_CARD: Diet confirmed for today"
+
+    elif tool_name == "log_reading_dm":
+        # Ensure checkin row exists
+        checkin = await db.get_checkin(user_id, day)
+        if not checkin:
+            await db.create_checkin(user_id, day, today_et().isoformat())
+
+        # Resolve book title — use user's current_book as fallback
+        book_title = (tool_input.get("book_title") or "").strip()
+        if not book_title:
+            user = await db.get_user(user_id)
+            book_title = (dict(user).get("current_book") if user else None) or "unknown"
+
+        takeaway = (tool_input.get("takeaway") or "").strip()
+        just_completed = await db.log_reading(user_id, day, book_title, takeaway)
+        if just_completed:
+            await _maybe_fire_completion_eggs(user_id, day)
+        return f"REFRESH_CARD: Reading logged for today — '{book_title}'" + (f" (takeaway: {takeaway[:80]})" if takeaway else "")
 
     elif tool_name == "fix_water":
         cups = max(0, min(16, tool_input.get("cups", 0)))

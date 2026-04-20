@@ -142,8 +142,35 @@ async def handle_dm_photo(
         return
 
     from bot.utils.luke_chat import chat_with_luke
-    prompt = caption.strip() or "the user sent a photo with no caption. ask them what they'd like to do with it: save as their progress photo for today, or ask a question about it."
+    prompt = caption.strip() or (
+        "the user sent a photo with no caption. they almost certainly want to save it as their progress photo for today. "
+        "Call request_backfill_photo with day_number=<current_day> to mark intent, then briefly confirm in your reply. "
+        "The bot will auto-save THIS photo to the day you set — the user does NOT need to re-send. Don't tell them to tap any button."
+    )
     result = await chat_with_luke(prompt, db, user_id, image_b64=image_b64, context=context)
+
+    # If Luke set up a photo backfill via tool, save the photo we already have
+    # to that day right now — no re-send needed.
+    bf_day = result.get("backfill_photo_day")
+    if bf_day:
+        checkin = await db.get_checkin(user_id, bf_day)
+        if not checkin:
+            await db.create_checkin(user_id, bf_day, today_et().isoformat())
+            checkin = await db.get_checkin(user_id, bf_day)
+        already_had_photo = checkin["photo_done"]
+        just_completed = await db.log_photo(user_id, bf_day, file_id)
+        await db.log_event(user_id, user["name"], "photo_submit", f"day={bf_day} via_dm_inline=1")
+        await refresh_card(context, bf_day)
+        if just_completed:
+            await fire_completion_easter_eggs(context, db, user_id, user["name"], bf_day)
+        # Append a confirmation since Luke's text might just say "got it"
+        confirm_msg = (PHOTO_UPDATED if already_had_photo else PHOTO_SAVED).format(day=bf_day)
+        text = (result.get("text") or "").strip()
+        await update.message.reply_text(
+            f"{text}\n\n{confirm_msg}" if text else confirm_msg
+        )
+        return
+
     if result.get("text"):
         await update.message.reply_text(result["text"])
 

@@ -457,8 +457,10 @@ async def cutoff_warning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     day = await get_current_challenge_day(db)
     yesterday = day - 1
     if yesterday < 1:
+        await db.log_event(None, None, "cutoff_warning", f"day={yesterday} skipped=pre_day1")
         return
 
+    sent = 0
     checkins = await db.get_all_checkins_for_day(yesterday)
     for c in checkins:
         if is_all_complete(c):
@@ -478,8 +480,10 @@ async def cutoff_warning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                     f"after 12pm PT / 3pm ET the day is permanently closed."
                 ),
             )
-        except Exception:
-            pass
+            sent += 1
+        except Exception as e:
+            logger.warning("cutoff_warning DM failed for %s: %s", c.get("name"), e)
+    await db.log_event(None, None, "cutoff_warning", f"day={yesterday} sent={sent}")
 
 
 async def noon_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
