@@ -14,6 +14,16 @@ logger = logging.getLogger(__name__)
 
 LUKE_CHAT_SYSTEM = f"""You are Luke, the accountability bot for a 5-person 75 Hard challenge. You're chatting with a participant in DMs.
 
+<critical_rules>
+READ THESE FIRST. They override everything else below when they conflict.
+
+1. ACT IN THIS TURN. If a tool call is appropriate, call it NOW, in this same response. Never output "let me log X", "logging now:", "hold on", "give me a sec" without also calling the tool in the same turn. Lead-in narration without execution is a bug — the user sees words, nothing happens. If you're going to log 3 foods, call log_food 3 times in this turn. If you're answering a question, just answer. Never narrate intent and then stop.
+
+2. KEEP TEXT SHORT. Your visible text to the user must fit in under 150 tokens. Tool calls are separate — they don't count. If the user asks you to log 5 foods, reply with one short sentence ("logged — you're at Xg now") after making all 5 log_food calls, not a paragraph per food.
+
+3. GROUND TRUTH IS THE DB. Before claiming anything about logged state ("you already did X", "your total is Y", "yesterday you had Z"), call the appropriate tool FIRST. Your chat memory is short and wrong. The DB via tools is the only source of truth.
+</critical_rules>
+
 THE CHALLENGE RULES (you enforce these):
 1. Two workouts per day, one indoor one outdoor. Duration is being finalized by the group.
 2. Drink a gallon of water (16 cups / 128 oz) every day.
@@ -219,6 +229,17 @@ TOOLS = [
         "name": "get_diet_progress",
         "description": "Get the user's diet log for today — all entries and running tally. Use when user asks how their diet is going, what they've eaten, how much protein/calories they have left, etc.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_diet_log_for_day",
+        "description": "Get the user's diet log entries for a SPECIFIC past day_number with running totals. Use when user asks 'what did I eat yesterday', 'show me my food on day 2', etc. For today, use get_diet_progress instead.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "day_number": {"type": "integer", "description": "The day to look up (1-indexed)"},
+            },
+            "required": ["day_number"],
+        },
     },
     {
         "name": "undo_last_food",
@@ -574,6 +595,28 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
 
         return "\n".join(lines)
 
+    elif tool_name == "get_diet_log_for_day":
+        target_day = int(tool_input["day_number"])
+        if target_day < 1 or target_day > day:
+            return f"Invalid day {target_day}. Today is day {day}."
+        entries = await db.get_diet_entries(user_id, target_day)
+        if not entries:
+            return f"No food logged for day {target_day}."
+        lines = [f"Day {target_day} entries ({len(entries)}):"]
+        for e in entries:
+            val = f" ({e['extracted_value']:.0f} {e['extracted_unit']})" if e.get("extracted_value") else ""
+            lines.append(f"  - {e['entry_text']}{val}")
+        units = {}
+        for e in entries:
+            if e.get("extracted_value") and e.get("extracted_unit"):
+                u = e["extracted_unit"]
+                units[u] = units.get(u, 0) + e["extracted_value"]
+        if units:
+            lines.append("Totals:")
+            for u, total in units.items():
+                lines.append(f"  {total:.0f} {u}")
+        return "\n".join(lines)
+
     elif tool_name == "undo_last_food":
         deleted = await db.delete_last_diet_entry(user_id, day)
         if deleted:
@@ -858,14 +901,39 @@ async def chat_with_luke(
 
         start = time.monotonic()
 
+        async def _call_claude(msgs, label: str = "first"):
+            """Call Claude with truncation detection + auto-retry on max_tokens.
+
+            Returns the response. Logs an ai_chat_truncated event if the model
+            hit max_tokens (truncated mid-thought). Auto-retries once with
+            doubled cap so the user doesn't see the truncation as silence.
+            """
+            CAPS = [1024, 2048]  # primary + retry
+            last_resp = None
+            for attempt, cap in enumerate(CAPS):
+                last_resp = client.messages.create(
+                    model="claude-opus-4-7",
+                    max_tokens=cap,
+                    system=LUKE_CHAT_SYSTEM,
+                    tools=TOOLS,
+                    messages=msgs,
+                )
+                if last_resp.stop_reason != "max_tokens":
+                    return last_resp
+                # Truncated. Log loudly and retry (or give up after last attempt).
+                logger.warning(
+                    "AI_CHAT_TRUNCATED user_id=%d label=%s attempt=%d cap=%d",
+                    user_id, label, attempt + 1, cap,
+                )
+                try:
+                    await db.log_event(user_id, None, "ai_chat_truncated",
+                                       f"label={label} cap={cap} attempt={attempt+1}")
+                except Exception:
+                    pass
+            return last_resp  # truncated even after retry — caller handles
+
         # First call — Claude may want to use tools
-        response = client.messages.create(
-            model="claude-opus-4-7",
-            max_tokens=1024,
-            system=LUKE_CHAT_SYSTEM,
-            tools=TOOLS,
-            messages=messages,
-        )
+        response = await _call_claude(messages, label="first")
 
         # Process tool calls (may need multiple rounds)
         cover_url = None
@@ -912,13 +980,7 @@ async def chat_with_luke(
             messages.append({"role": "assistant", "content": response.content})
             messages.append({"role": "user", "content": tool_results})
 
-            response = client.messages.create(
-                model="claude-opus-4-7",
-                max_tokens=1024,
-                system=LUKE_CHAT_SYSTEM,
-                tools=TOOLS,
-                messages=messages,
-            )
+            response = await _call_claude(messages, label="tool_loop")
 
         # Extract final text response
         text = ""
@@ -944,6 +1006,33 @@ async def chat_with_luke(
                                    f"stop={getattr(response,'stop_reason','?')} tools={tools_called}")
             except Exception:
                 pass
+
+        # Phantom-action detection: Luke said he was about to do something but
+        # never called any tool. This is a defect — the user thinks an action
+        # happened but it didn't. We can't recover the action server-side
+        # (we don't know what Luke meant), so warn the user explicitly and log
+        # the event so we can review patterns and fix prompts.
+        ACTION_PHRASES = (
+            "logging now", "let me log", "let me actually log", "logging it",
+            "logging everything", "let me push", "logging all",
+            "give me a sec", "hold up", "hold on, let me", "give me one sec",
+        )
+        text_lower = text.lower()
+        if not tools_called and any(p in text_lower for p in ACTION_PHRASES):
+            logger.warning(
+                "AI_CHAT_PHANTOM_ACTION user_id=%d text=%r",
+                user_id, text[:200],
+            )
+            try:
+                await db.log_event(user_id, None, "ai_chat_phantom_action",
+                                   f"text={text[:120]!r}")
+            except Exception:
+                pass
+            # Append a clear correction so the user knows to retry
+            text = (
+                text.rstrip(".:!?") + " — actually wait, glitch on my end. nothing got "
+                "logged. resend and I'll do it for real this time."
+            )
 
         latency_ms = int((time.monotonic() - start) * 1000)
         await db.log_event(user_id, None, "ai_chat", f"msg_len={len(message)}", latency_ms=latency_ms)
