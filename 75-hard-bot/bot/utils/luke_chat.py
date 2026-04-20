@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import time
 from datetime import date, datetime, timedelta
 
@@ -361,6 +362,40 @@ TOOLS = [
 ]
 
 
+def _parse_diet_goal(diet_plan: str | None) -> tuple[float, str] | None:
+    """Extract a numeric goal + unit from a free-form diet plan string.
+
+    Returns (value, extracted_unit) or None if no numeric goal found.
+
+    Recognizes patterns like:
+      "170g protein" / "high protein 170g"   -> (170, "protein_g")
+      "1800 calories" / "1800 cal/day"       -> (1800, "calories")
+      "200g carbs"                           -> (200, "carbs_g")
+      "60g fat"                              -> (60, "fat_g")
+    Qualitative diets like "clean eating, no processed snacks" return None.
+    """
+    if not diet_plan:
+        return None
+    text = diet_plan.lower()
+    # Order matters — match more specific first
+    patterns = [
+        (r"(\d{2,4})\s*g\s*(?:of\s+)?protein|\bprotein\b[^0-9]{0,30}(\d{2,4})\s*g", "protein_g"),
+        (r"(\d{3,5})\s*(?:cal|calories|kcal)\b", "calories"),
+        (r"(\d{2,4})\s*g\s*(?:of\s+)?carbs?|\bcarbs?\b[^0-9]{0,30}(\d{2,4})\s*g", "carbs_g"),
+        (r"(\d{2,4})\s*g\s*(?:of\s+)?fat|\bfat\b[^0-9]{0,30}(\d{2,4})\s*g", "fat_g"),
+    ]
+    for pattern, unit in patterns:
+        m = re.search(pattern, text)
+        if m:
+            for grp in m.groups():
+                if grp:
+                    try:
+                        return (float(grp), unit)
+                    except ValueError:
+                        pass
+    return None
+
+
 async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, context=None) -> str:
     """Execute a tool call and return the result as a string.
 
@@ -562,11 +597,35 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
         user = await db.get_user(user_id)
         diet_plan = dict(user).get("diet_plan", "not set") if user else "not set"
 
+        # Auto-flip diet_done when the user crosses their numeric goal threshold
+        # (e.g. 170g protein). Idempotent: only flips if currently 0.
+        goal_msg = ""
+        goal = _parse_diet_goal(diet_plan)
+        if goal:
+            goal_value, goal_unit = goal
+            total_for_goal = sum(
+                e.get("extracted_value", 0) or 0
+                for e in entries
+                if e.get("extracted_unit") == goal_unit
+            )
+            if total_for_goal >= goal_value:
+                checkin = await db.get_checkin(user_id, day)
+                if checkin and not checkin["diet_done"]:
+                    _, just_completed = await db.toggle_diet(user_id, day)
+                    goal_msg = f" 🎯 GOAL HIT — diet auto-confirmed for today ({total_for_goal:.0f}/{goal_value:.0f} {goal_unit})."
+                    if just_completed and context is not None:
+                        await _maybe_fire_completion_eggs(user_id, day)
+                    # Signal a card refresh so the user sees the diet checkmark
+                    return (
+                        f"REFRESH_CARD: Logged: {entry_text}. Running total: {total_for_goal:.0f} {goal_unit}."
+                        f"{goal_msg}"
+                    )
+
         if extracted_unit and extracted_value is not None:
             total = sum(e.get("extracted_value", 0) or 0 for e in entries if e.get("extracted_unit") == extracted_unit)
-            return f"Logged: {entry_text}. Running total: {total:.0f} {extracted_unit}. Diet goal: {diet_plan}. {len(entries)} entries today."
+            return f"Logged: {entry_text}. Running total: {total:.0f} {extracted_unit}. Diet goal: {diet_plan}. {len(entries)} entries today.{goal_msg}"
         else:
-            return f"Logged: {entry_text}. {len(entries)} entries today. Diet goal: {diet_plan}."
+            return f"Logged: {entry_text}. {len(entries)} entries today. Diet goal: {diet_plan}.{goal_msg}"
 
     elif tool_name == "get_diet_progress":
         entries = await db.get_diet_entries(user_id, day)
