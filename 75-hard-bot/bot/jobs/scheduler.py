@@ -445,6 +445,43 @@ async def morning_after_reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None
             pass
 
 
+async def cutoff_warning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """11 AM PT -- DM each user with incomplete yesterday tasks; lock is in 1 hour.
+
+    Last call before noon_cutoff_job locks yesterday for good. Aimed at users
+    like Cam who silently lose a day because they missed the morning reminder
+    and never realized the cutoff was approaching.
+    """
+    db = context.bot_data["db"]
+    from bot.utils.progress import get_current_challenge_day
+    day = await get_current_challenge_day(db)
+    yesterday = day - 1
+    if yesterday < 1:
+        return
+
+    checkins = await db.get_all_checkins_for_day(yesterday)
+    for c in checkins:
+        if is_all_complete(c):
+            continue
+        missing = get_missing_tasks(c)
+        user = await db.get_user(c["telegram_id"])
+        if not user or not user["dm_registered"]:
+            continue
+        missing_list = "\n".join(f"  - {m.lower()}" for m in missing)
+        try:
+            await context.bot.send_message(
+                chat_id=c["telegram_id"],
+                text=(
+                    f"⏰ ONE HOUR until day {yesterday} locks. you're still incomplete:\n\n"
+                    f"{missing_list}\n\n"
+                    f"hit me back with what you actually did and I'll backfill it. "
+                    f"after 12pm PT / 3pm ET the day is permanently closed."
+                ),
+            )
+        except Exception:
+            pass
+
+
 async def noon_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """12 PM PT -- Lock previous day, flag incomplete users to admin."""
     day = get_day_number(CHALLENGE_START_DATE, today_et())
@@ -551,6 +588,9 @@ def schedule_jobs(job_queue) -> None:
     )
     job_queue.run_daily(
         morning_after_reminder_job, time=time(9, 0, tzinfo=ET), name="morning_after_reminder"
+    )
+    job_queue.run_daily(
+        cutoff_warning_job, time=time(11, 0, tzinfo=PT), name="cutoff_warning"
     )
     job_queue.run_daily(
         noon_cutoff_job, time=time(12, 0, tzinfo=PT), name="noon_cutoff"

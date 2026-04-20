@@ -307,14 +307,18 @@ TOOLS = [
     },
     {
         "name": "backfill_task",
-        "description": "Log a non-photo task for YESTERDAY that the user forgot. Only works before noon PT (with a one-time grace window for Day 1). Use when user says they forgot to log something from yesterday.",
+        "description": "Log a non-photo task for a previous day that the user forgot. Defaults to YESTERDAY but accepts an explicit day_number for any past day in the user's challenge window. Same noon PT cutoff applies per day (Day 1 grace exception). Use when user says they forgot to log something from a past day.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "task": {
                     "type": "string",
                     "enum": ["workout_outdoor", "workout_indoor", "water", "reading", "diet"],
-                    "description": "Which task to backfill for yesterday",
+                    "description": "Which task to backfill",
+                },
+                "day_number": {
+                    "type": "integer",
+                    "description": "Optional. The day to backfill (1-indexed global day). Defaults to yesterday. Use this when user says 'fill in Day 4' or names a specific day.",
                 },
                 "detail": {
                     "type": "string",
@@ -753,33 +757,47 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
         _PT = _pytz.timezone("US/Pacific")
         now_pt = datetime.now(_PT)
 
+        # Resolve target day. Defaults to yesterday but accepts explicit day_number.
+        target_day = tool_input.get("day_number")
+        if target_day is None:
+            target_day = day - 1
+        else:
+            target_day = int(target_day)
+
+        if target_day < 1:
+            return "DENIED: There's no Day 0 or earlier. The challenge starts at Day 1."
+        if target_day > day:
+            return f"DENIED: Day {target_day} hasn't happened yet. Today is Day {day}."
+
         yesterday = day - 1
-        if yesterday < 1:
-            return "DENIED: There's no yesterday to backfill. The challenge just started."
 
-        # Day 1 grace: first day is for figuring out the system, no noon PT cutoff.
-        # From Day 2 onward, normal 12pm PT lock applies.
-        is_day_1_grace = yesterday == 1
-        if not is_day_1_grace and now_pt.hour >= 12:
-            return "DENIED: It's past 12pm PT / 3pm ET. Yesterday's tasks are locked in. Backfill window closed."
+        # Per-day cutoff: backfilling is allowed for yesterday until noon PT next day.
+        # Anything older is locked. Day 1 has a grace window — always allowed regardless of clock.
+        is_day_1_grace = target_day == 1
+        if not is_day_1_grace:
+            if target_day < yesterday:
+                return f"DENIED: Day {target_day} is more than 1 day old — backfill window for that day is permanently closed. Ask the organizer for grace."
+            if target_day == yesterday and now_pt.hour >= 12:
+                return f"DENIED: It's past 12pm PT / 3pm ET. Day {target_day}'s tasks are locked in. Backfill window closed."
 
-        # Ensure checkin exists for yesterday
-        checkin = await db.get_checkin(user_id, yesterday)
+        # Ensure checkin exists for the target day
+        checkin = await db.get_checkin(user_id, target_day)
         if not checkin:
-            yesterday_date = (now_pt.date() - timedelta(days=1)).isoformat()
-            await db.create_checkin(user_id, yesterday, yesterday_date)
+            offset_days = day - target_day
+            target_date = (now_pt.date() - timedelta(days=offset_days)).isoformat()
+            await db.create_checkin(user_id, target_day, target_date)
 
         task = tool_input["task"]
         detail = tool_input.get("detail", "")
 
         if task == "workout_outdoor":
             wtype = detail or "workout"
-            slot, _ = await db.log_workout(user_id, yesterday, wtype, "outdoor")
-            result_msg = f"REFRESH_CARD: Backfilled outdoor {wtype} for day {yesterday}, slot {slot}/2"
+            slot, _ = await db.log_workout(user_id, target_day, wtype, "outdoor")
+            result_msg = f"REFRESH_CARD: Backfilled outdoor {wtype} for day {target_day}, slot {slot}/2"
         elif task == "workout_indoor":
             wtype = detail or "workout"
-            slot, _ = await db.log_workout(user_id, yesterday, wtype, "indoor")
-            result_msg = f"REFRESH_CARD: Backfilled indoor {wtype} for day {yesterday}, slot {slot}/2"
+            slot, _ = await db.log_workout(user_id, target_day, wtype, "indoor")
+            result_msg = f"REFRESH_CARD: Backfilled indoor {wtype} for day {target_day}, slot {slot}/2"
         elif task == "water":
             cups = 16  # default to full gallon
             if detail:
@@ -787,17 +805,17 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
                     cups = int(detail)
                 except ValueError:
                     cups = 16
-            await db.set_water(user_id, yesterday, min(cups, 16))
-            result_msg = f"REFRESH_CARD: Backfilled water for day {yesterday} -- set to {min(cups, 16)}/16 cups"
+            await db.set_water(user_id, target_day, min(cups, 16))
+            result_msg = f"REFRESH_CARD: Backfilled water for day {target_day} -- set to {min(cups, 16)}/16 cups"
         elif task == "reading":
             book_title = detail or "unknown"
-            await db.log_reading(user_id, yesterday, book_title, "")
-            result_msg = f"REFRESH_CARD: Backfilled reading for day {yesterday}"
+            await db.log_reading(user_id, target_day, book_title, "")
+            result_msg = f"REFRESH_CARD: Backfilled reading for day {target_day}"
         elif task == "diet":
-            checkin = await db.get_checkin(user_id, yesterday)
+            checkin = await db.get_checkin(user_id, target_day)
             if not checkin["diet_done"]:
-                await db.toggle_diet(user_id, yesterday)
-            result_msg = f"REFRESH_CARD: Backfilled diet for day {yesterday}"
+                await db.toggle_diet(user_id, target_day)
+            result_msg = f"REFRESH_CARD: Backfilled diet for day {target_day}"
         else:
             return f"Unknown task type: {task}"
 
