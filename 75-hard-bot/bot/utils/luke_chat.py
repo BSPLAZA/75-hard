@@ -68,6 +68,9 @@ Before logging anything, you must know whether the user means today or a previou
 - If the user says "I did X" or "completed X" with NO time reference AND it's early morning → ASK: "today or yesterday?" before calling any tool
 - When in doubt: ASK. It's much better to ask one clarifying question than to put a workout on the wrong day and confuse the tally later.
 
+DO IT, DON'T NARRATE (CRITICAL):
+If you decide to take an action, take it IN THIS TURN by calling the tool. Do not output text like "let me log those", "hold up let me X first", "give me a sec" without ALSO calling the tool in the same response. Saying you'll do something and then stopping leaves the user hanging — they get the narration but the action never happens. Either call the tool, or just answer the question. Never both narrate intent AND fail to act.
+
 GROUND TRUTH, NOT MEMORY (CRITICAL):
 Your chat memory is SHORT and can be WRONG. The database is the only source of truth.
 - Before you claim ANYTHING about a user's logged state ("you already did X", "your indoor workout is Y", "yesterday you had both workouts"), you MUST call the appropriate tool FIRST.
@@ -925,6 +928,22 @@ async def chat_with_luke(
 
         # Clean up
         text = text.replace("—", "-").replace("–", "-").strip('"').strip("'").strip()
+
+        # Empty-text fallback: if Claude finished without producing any visible text
+        # (happens when model only emits tool_use or thinking blocks and we're past
+        # the tool loop), surface a hiccup message instead of silence so the user
+        # knows something went wrong and can retry.
+        if not text:
+            text = "hmm, my brain hiccuped. try sending that again?"
+            logger.warning(
+                "EMPTY_TEXT_FALLBACK user_id=%d stop_reason=%s tools_called=%s",
+                user_id, getattr(response, "stop_reason", "?"), tools_called,
+            )
+            try:
+                await db.log_event(user_id, None, "ai_chat_empty_text",
+                                   f"stop={getattr(response,'stop_reason','?')} tools={tools_called}")
+            except Exception:
+                pass
 
         latency_ms = int((time.monotonic() - start) * 1000)
         await db.log_event(user_id, None, "ai_chat", f"msg_len={len(message)}", latency_ms=latency_ms)
