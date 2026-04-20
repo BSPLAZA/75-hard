@@ -861,7 +861,7 @@ async def chat_with_luke(
         # First call — Claude may want to use tools
         response = client.messages.create(
             model="claude-opus-4-7",
-            max_tokens=300,
+            max_tokens=1024,
             system=LUKE_CHAT_SYSTEM,
             tools=TOOLS,
             messages=messages,
@@ -914,7 +914,7 @@ async def chat_with_luke(
 
             response = client.messages.create(
                 model="claude-opus-4-7",
-                max_tokens=300,
+                max_tokens=1024,
                 system=LUKE_CHAT_SYSTEM,
                 tools=TOOLS,
                 messages=messages,
