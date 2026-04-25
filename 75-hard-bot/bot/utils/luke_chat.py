@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 
 import anthropic
 
-from bot.config import ANTHROPIC_API_KEY, CHALLENGE_START_DATE, ORGANIZER
+from bot.config import ANTHROPIC_API_KEY, CHALLENGE_START_DATE, GROUP_CHAT_ID, ORGANIZER
 from bot.utils.progress import today_et, get_day_number, get_current_challenge_day, is_all_complete, get_missing_tasks
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,10 @@ READ THESE FIRST. They override everything else below when they conflict.
    - "stayed on diet" → confirm_diet_dm
    - photo with caption or no caption → request_backfill_photo with day_number=current_day, the photo handler auto-saves it
    The ONLY thing that requires the group card buttons is nothing. There is no tool for the daily card photo button that you don't have via a DM tool.
+
+5. NUMBERS COME FROM TOOLS, NOT MEMORY. Never include a numerical state claim ("Xg, Y to go", "you're at N", "goal hit", "X/16 cups", "at Yg today") that wasn't returned by a tool call IN THIS TURN. Your chat memory of running totals is unreliable — you may have hallucinated previous totals, and the user's history can mislead you. If you want to mention a total, count, or running tally, you MUST call get_diet_progress, get_my_status, log_food, log_water_dm, etc. in this same turn AND quote numbers only from that tool's return value. If you didn't call a tool that returned the number, do not output the number.
+
+6. DAY RESOLUTION COMES FROM SESSION CONTEXT, NOT MEMORY. The system prompt below includes a SESSION CONTEXT block telling you today's day number and yesterday's day number. When the user says "yesterday" or "today", resolve via that anchor — NOT via what you remember from earlier in chat. If chat memory disagrees with SESSION CONTEXT, SESSION CONTEXT wins.
 </critical_rules>
 
 THE CHALLENGE RULES (you enforce these):
@@ -112,6 +116,14 @@ BOOKS (search-confirm-save):
     intent="correct" — user is fixing a typo on their CURRENT book (does NOT mark previous as finished)
     intent="finish_and_start" — user finished their previous book and is starting a new one
 - If get_my_profile shows the user already has a current_book and they're trying to set another, ASK them: "did you finish [current_book] or just want to fix the title?"
+
+WHEN A USER FINISHES A BOOK:
+- Trust their word. If they say "I finished X", they finished X. Don't ask for confirmation/proof.
+- BUT you cannot call set_book(intent="finish_and_start") without a NEW book title — the schema requires both. So push for the next title in the SAME turn:
+    "nice. what are you starting next? need the title (and author if you have it) so I can lock it in."
+- After they give you the new title, do the search_books → confirm → set_book(intent="finish_and_start") flow as normal.
+- Do NOT just acknowledge the finish and end the turn. The finish is only real once set_book(finish_and_start) succeeds and the announcement fires to the group.
+- If they truly don't have a next book picked: tell them the finish only registers when they pick the next one, and to come back when they decide.
 
 WHAT YOU CAN'T DO:
 - Eliminate or redeem people (they use /fail and /redeem)
@@ -569,9 +581,60 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
             return f'Book corrected to "{title}". Cover URL: {cover_url or "none found"}'
 
         if intent == "finish_and_start":
+            # Capture old book details BEFORE finishing so we can announce them.
+            old_title: str | None = None
+            old_started_day: int | None = None
+            old_cover_url: str | None = None
             if has_current:
+                try:
+                    async with db._conn.execute(
+                        """SELECT title, started_day, cover_url FROM books
+                           WHERE telegram_id = ? AND finished_day IS NULL
+                           ORDER BY id DESC LIMIT 1""",
+                        (user_id,),
+                    ) as cur:
+                        old_row = await cur.fetchone()
+                    if old_row:
+                        old_title = old_row["title"]
+                        old_started_day = old_row["started_day"]
+                        old_cover_url = old_row["cover_url"]
+                except Exception:
+                    pass
                 await db.finish_book(user_id, finished_day=day)
             await db.set_current_book(user_id, title, started_day=day, cover_url=cover_url or None)
+
+            # Announce the finish to the group. Trust the user's word — no confirm step.
+            if old_title and context is not None and GROUP_CHAT_ID:
+                try:
+                    user_row = await db.get_user(user_id)
+                    user_name = (dict(user_row).get("name") if user_row else None) or "someone"
+                    duration = ""
+                    if old_started_day and old_started_day <= day:
+                        days_taken = day - old_started_day + 1
+                        duration = f" (took {days_taken} day{'s' if days_taken != 1 else ''})"
+                    announcement = (
+                        f"📚 {user_name} just finished {old_title}{duration}. "
+                        f"next up: {title}. respect."
+                    )
+                    if old_cover_url:
+                        await context.bot.send_photo(
+                            chat_id=GROUP_CHAT_ID,
+                            photo=old_cover_url,
+                            caption=announcement,
+                        )
+                    else:
+                        await context.bot.send_message(
+                            chat_id=GROUP_CHAT_ID,
+                            text=announcement,
+                        )
+                    try:
+                        await db.log_event(user_id, None, "book_finished",
+                                           f"old={old_title!r} new={title!r}")
+                    except Exception:
+                        pass
+                except Exception as e:
+                    logger.warning("book finish announcement failed: %s", e)
+
             return f'Previous book finished. New book set to "{title}". Cover URL: {cover_url or "none found"}'
 
         # intent == "new"
@@ -931,11 +994,149 @@ _history_loaded: set[int] = set()  # users we've already lazy-loaded from DB
 MAX_HISTORY = 10  # messages per user
 
 
+# Patterns that indicate Luke emitted a numerical state claim. Used both at output
+# validation time (to catch phantoms) and at history hydration (to skip rows that
+# were likely phantoms so they don't poison future turns).
+_PHANTOM_TEXT_PATTERNS = [
+    re.compile(r"\b\d+\s*g\s*[,.]?\s*\d+\s*(?:to go|left|remaining)\b", re.I),
+    re.compile(r"\bgoal\s+(?:hit|smashed|reached|locked)\b", re.I),
+    re.compile(r"\b\d+\s*g\s*,\s*goal\s+(?:hit|smashed)\b", re.I),
+    re.compile(r"\byou'?re\s+at\s+\d+\s*(?:g|cups?|/\s*16)\b", re.I),
+    re.compile(r"\b\d+\s*g\s+(?:so far|today|down)\b", re.I),
+    re.compile(r"\b\d+\s*/\s*16\s*(?:cups)?\b", re.I),
+    re.compile(r"\b(?:added|bumped to|now at)\s+\d+\b", re.I),
+    re.compile(r"\bday\s+\d+\s+at\s+\d+\s*g\b", re.I),
+]
+
+# Tool classes that legitimize a numerical state claim. If Luke claims a diet total,
+# at least one diet-context tool must have run this turn. Same for water.
+_DIET_TOOLS = {
+    "log_food", "get_diet_progress", "get_diet_log_for_day",
+    "get_my_status", "get_my_status_for_day",
+    "undo_last_food", "confirm_diet_dm",
+}
+_WATER_TOOLS = {
+    "log_water_dm", "fix_water", "backfill_task",
+    "get_my_status", "get_my_status_for_day",
+}
+
+
+def _state_claim_pattern_class(matched_text: str) -> str:
+    """Classify a matched state-claim snippet into a tool family ('diet' or 'water')."""
+    t = matched_text.lower()
+    if "/16" in t or "cup" in t:
+        return "water"
+    return "diet"
+
+
+def _check_state_claims(text: str, tools_called: list[str]) -> tuple[str, str] | None:
+    """If Luke output a numerical state claim without a backing tool call this turn,
+    return (claim_class, snippet). Otherwise None.
+
+    Rationale: the v46 phrase detector caught lead-in narration ("logging now").
+    Claude evolved past it by skipping the narration and emitting hallucinated
+    totals directly. This is the structural detector — independent of phrasing.
+    """
+    if not text:
+        return None
+    tools_set = set(tools_called)
+    for pattern in _PHANTOM_TEXT_PATTERNS:
+        m = pattern.search(text)
+        if not m:
+            continue
+        claim_class = _state_claim_pattern_class(m.group(0))
+        valid_tools = _DIET_TOOLS if claim_class == "diet" else _WATER_TOOLS
+        if not (tools_set & valid_tools):
+            return (claim_class, m.group(0))
+    return None
+
+
+def _looks_like_phantom_row(luke_response: str | None, tools_called: str | None) -> bool:
+    """Heuristic: was this conversation_log row likely a phantom?
+
+    We exclude such rows from history hydration so old lies don't seed the next
+    turn's context. Conservative: if a tool was called, trust the row.
+    """
+    if not luke_response:
+        return False
+    if tools_called:  # had at least one tool — assume legitimate
+        return False
+    return any(p.search(luke_response) for p in _PHANTOM_TEXT_PATTERNS)
+
+
+async def _build_session_context(user_id: int, db) -> str:
+    """Snapshot DB truth at the start of a chat turn.
+
+    Returns a SESSION CONTEXT block to append to the system prompt. Gives Luke
+    a fresh, authoritative anchor every turn so he can't drift via stale chat
+    history. Stops the "I'll continue the running total in my head" failure mode.
+    """
+    today = today_et()
+    day = await get_current_challenge_day(db)
+    yesterday = day - 1
+
+    # Today's checkin status
+    checkin = await db.get_checkin(user_id, day)
+    if checkin:
+        c = dict(checkin)
+        status_block = (
+            f"  workout 1: {'done' if c.get('workout_1_done') else 'not done'}\n"
+            f"  workout 2: {'done' if c.get('workout_2_done') else 'not done'}\n"
+            f"  water: {c.get('water_cups', 0)}/16 cups\n"
+            f"  diet: {'confirmed' if c.get('diet_done') else 'not confirmed'}\n"
+            f"  reading: {'done' if c.get('reading_done') else 'not done'}\n"
+            f"  photo: {'done' if c.get('photo_done') else 'not done'}"
+        )
+    else:
+        status_block = "  (no checkin row yet — user hasn't logged anything today)"
+
+    # Today's diet log entries with running totals
+    try:
+        diet_entries = await db.get_diet_entries(user_id, day)
+    except Exception:
+        diet_entries = []
+    if diet_entries:
+        units: dict[str, float] = {}
+        for e in diet_entries:
+            if e.get("extracted_value") and e.get("extracted_unit"):
+                u = e["extracted_unit"]
+                units[u] = units.get(u, 0.0) + e["extracted_value"]
+        totals_str = ", ".join(f"{v:.0f} {u}" for u, v in units.items()) or "no numeric totals"
+        diet_block = f"  {len(diet_entries)} entries, totals: {totals_str}"
+    else:
+        diet_block = "  0 entries logged today"
+
+    # Diet plan
+    user = await db.get_user(user_id)
+    diet_plan = (dict(user).get("diet_plan") if user else None) or "(not set)"
+
+    return (
+        "---\n"
+        "SESSION CONTEXT (DB truth, freshly read at start of this turn — overrides chat memory):\n"
+        f"  today is Day {day} ({today.isoformat()})\n"
+        f"  yesterday was Day {yesterday}\n"
+        f"  user's diet plan: {diet_plan}\n"
+        "\n"
+        "today's checkin:\n"
+        f"{status_block}\n"
+        "\n"
+        "today's diet log:\n"
+        f"{diet_block}\n"
+        "\n"
+        "Use these numbers when the user asks about totals or status. Do NOT\n"
+        "compute totals from chat memory — that has been wrong before. If the\n"
+        "user logs new food/water this turn, the tool's return value supersedes\n"
+        "the snapshot above (which was taken before the tool ran)."
+    )
+
+
 async def _ensure_history_loaded(user_id: int, db) -> None:
     """Hydrate _chat_history[user_id] from conversation_log on first access.
 
     Lets chat memory survive bot restarts. Idempotent — only loads once per process.
     Skips entries with image content since we don't store image bytes in the log.
+    Skips rows that look like phantom-action outputs (state claims with no backing
+    tool call) so old lies don't reseed the next turn's context.
     """
     if user_id in _history_loaded:
         return
@@ -949,8 +1150,12 @@ async def _ensure_history_loaded(user_id: int, db) -> None:
     for r in reversed(list(rows)):
         u_msg = r["user_message"] or ""
         l_msg = r["luke_response"] or ""
+        tc = r["tools_called"] if "tools_called" in r.keys() else None
         # Skip rows with image markers — we can't reconstruct the image
         if u_msg.startswith("[image]"):
+            continue
+        # Skip likely-phantom rows so old lies don't poison the next turn
+        if _looks_like_phantom_row(l_msg, tc):
             continue
         if u_msg:
             msgs.append({"role": "user", "content": u_msg})
@@ -995,6 +1200,12 @@ async def chat_with_luke(
         # Lazy-hydrate per-user chat memory from the DB on first message after restart
         await _ensure_history_loaded(user_id, db)
 
+        # Build dynamic system prompt = static base + per-turn DB truth snapshot.
+        # The session context anchors today/yesterday and current totals so Luke
+        # can't drift via stale chat history.
+        session_context = await _build_session_context(user_id, db)
+        system_prompt = LUKE_CHAT_SYSTEM + "\n\n" + session_context
+
         # Build messages with history for context
         history = _get_history(user_id)
         if image_b64:
@@ -1028,7 +1239,7 @@ async def chat_with_luke(
                 last_resp = client.messages.create(
                     model="claude-opus-4-7",
                     max_tokens=cap,
-                    system=LUKE_CHAT_SYSTEM,
+                    system=system_prompt,
                     tools=TOOLS,
                     messages=msgs,
                 )
@@ -1121,31 +1332,51 @@ async def chat_with_luke(
             except Exception:
                 pass
 
-        # Phantom-action detection: Luke said he was about to do something but
-        # never called any tool. This is a defect — the user thinks an action
-        # happened but it didn't. We can't recover the action server-side
-        # (we don't know what Luke meant), so warn the user explicitly and log
-        # the event so we can review patterns and fix prompts.
+        # Phantom-action detection — two variants, both ending with the same
+        # warning to the user. The user thinks an action happened but it didn't,
+        # and we can't recover server-side (we don't know what Luke meant).
+        #
+        # Variant A (v46 phrase detector): Luke narrated intent ("logging now",
+        # "let me log") with no tool call. Catches obvious lead-ins.
+        #
+        # Variant B (v50 state-claim detector): Luke skipped the narration and
+        # emitted a hallucinated total ("135g, 35 to go") with no diet/water
+        # tool to back it. Catches the post-v46 evolution where Claude routed
+        # around the phrase list.
         ACTION_PHRASES = (
             "logging now", "let me log", "let me actually log", "logging it",
             "logging everything", "let me push", "logging all",
             "give me a sec", "hold up", "hold on, let me", "give me one sec",
         )
         text_lower = text.lower()
+        phantom_variant: str | None = None
+        phantom_detail: str | None = None
+
         if not tools_called and any(p in text_lower for p in ACTION_PHRASES):
+            phantom_variant = "action_phrase_no_tool"
+            phantom_detail = text[:120]
+
+        if phantom_variant is None:
+            state_claim = _check_state_claims(text, tools_called)
+            if state_claim:
+                claim_class, snippet = state_claim
+                phantom_variant = f"state_claim_no_{claim_class}_tool"
+                phantom_detail = f"snippet={snippet!r} tools={tools_called}"
+
+        if phantom_variant is not None:
             logger.warning(
-                "AI_CHAT_PHANTOM_ACTION user_id=%d text=%r",
-                user_id, text[:200],
+                "AI_CHAT_PHANTOM_ACTION user_id=%d variant=%s detail=%s text=%r",
+                user_id, phantom_variant, phantom_detail, text[:200],
             )
             try:
                 await db.log_event(user_id, None, "ai_chat_phantom_action",
-                                   f"text={text[:120]!r}")
+                                   f"variant={phantom_variant} {phantom_detail or ''}"[:240])
             except Exception:
                 pass
             # Append a clear correction so the user knows to retry
             text = (
                 text.rstrip(".:!?") + " — actually wait, glitch on my end. nothing got "
-                "logged. resend and I'll do it for real this time."
+                "logged. resend and i'll do it for real this time."
             )
 
         latency_ms = int((time.monotonic() - start) * 1000)
