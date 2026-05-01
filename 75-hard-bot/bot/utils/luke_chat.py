@@ -35,6 +35,15 @@ READ THESE FIRST. They override everything else below when they conflict.
 5. NUMBERS COME FROM TOOLS, NOT MEMORY. Never include a numerical state claim ("Xg, Y to go", "you're at N", "goal hit", "X/16 cups", "at Yg today") that wasn't returned by a tool call IN THIS TURN. Your chat memory of running totals is unreliable — you may have hallucinated previous totals, and the user's history can mislead you. If you want to mention a total, count, or running tally, you MUST call get_diet_progress, get_my_status, log_food, log_water_dm, etc. in this same turn AND quote numbers only from that tool's return value. If you didn't call a tool that returned the number, do not output the number.
 
 6. DAY RESOLUTION COMES FROM SESSION CONTEXT, NOT MEMORY. The system prompt below includes a SESSION CONTEXT block telling you today's day number and yesterday's day number. When the user says "yesterday" or "today", resolve via that anchor — NOT via what you remember from earlier in chat. If chat memory disagrees with SESSION CONTEXT, SESSION CONTEXT wins.
+
+7. PICK THE RIGHT TOOL FOR THE INTENT. Map the user's content to the tool that handles that *kind* of thing — not the one that's superficially similar. Real production failure: a user said "I ate X today" and Luke called set_book, treating the food note as a book log. Disambiguation rules:
+   - "I ate X" / "had X for lunch" / "drank a protein shake" / "snacked on Y" → log_food (NOT set_book, NOT log_reading_dm)
+   - "I read X today" / "finished today's pages" / "got my reading in" → log_reading_dm (NOT set_book — set_book is for declaring/changing the book itself)
+   - "I'm reading X" / "starting X" / "switching books to Y" / "finished X, starting Y" → set_book (declares the book; does NOT count today's reading)
+   - "I drank water / X cups" → log_water_dm (NOT log_food, even if they say "I drank X")
+   - "I worked out / ran / lifted" → log_workout_dm (NOT log_food)
+   If a single message mixes domains ("I ran 5 miles and ate chicken"), call BOTH tools in this turn — log_workout_dm AND log_food. Never collapse a multi-domain message into one tool to "tidy up."
+   When the user message is genuinely ambiguous (one short fragment, no clear domain), ASK before calling any tool. A clarifying question is cheaper than a wrong tool call you have to undo later.
 </critical_rules>
 
 THE CHALLENGE RULES (you enforce these):
@@ -194,7 +203,7 @@ TOOLS = [
     },
     {
         "name": "set_book",
-        "description": "Save the user's book to the DB. Call this only AFTER search_books and after the user confirms the chosen candidate. Pass the EXACT title and cover_url from the chosen search_books candidate.",
+        "description": "Declare or change the user's CURRENT BOOK in their profile. Call only when the user is naming a book they're reading or starting (e.g. 'I'm reading Atomic Habits', 'switching to Savor', 'finished X, starting Y'). Do NOT call this when the user is logging today's reading SESSION (use log_reading_dm) or talking about food (use log_food). Always call search_books first and only set_book after the user confirms the candidate.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -235,7 +244,7 @@ TOOLS = [
     },
     {
         "name": "log_food",
-        "description": "Log a food/meal/snack that the user ate. Use whenever the user mentions eating, drinking (non-water), having a meal, snack, protein shake, etc. Extract the relevant metric based on their diet plan (protein grams, calories, etc). If their diet is 'clean eating', just note whether the food is clean or not.",
+        "description": "Log a food/meal/snack that the user ate. Use whenever the user mentions EATING (food, meal, snack, protein shake) or DRINKING something other than water (coffee, juice, etc). Trigger phrases include 'I ate', 'had for lunch', 'snacked on', 'just ate', 'drank a shake'. Do NOT call this for reading sessions, books, workouts, or water — those have their own tools (log_reading_dm, set_book, log_workout_dm, log_water_dm). Extract the relevant metric based on their diet plan (protein grams, calories, etc). If their diet is 'clean eating', just note whether the food is clean or not.",
         "input_schema": {
             "type": "object",
             "properties": {
