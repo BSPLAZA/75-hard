@@ -1,5 +1,7 @@
 # Luke — 75 Hard Accountability Bot
 
+> ↗ Take-home submission for Arize AI: [PLACEHOLDER]
+
 A Telegram bot that runs a 75 Hard challenge for a closed group of friends. Tracks the 5 daily tasks, posts a daily card with one-tap buttons, holds an LLM-powered DM with each participant, and surprises the group with milestone callouts and "spicy moment" highlights.
 
 Built for a specific friend group ("Locked In, 75 Hard"). The code is participant-agnostic — all roster info comes from env vars, so the same bot can run a different group with no code changes.
@@ -27,7 +29,7 @@ Built for a specific friend group ("Locked In, 75 Hard"). The code is participan
   "stayed on diet today"         → diet confirmed
   "ate chicken & rice, 40g protein" → tracked vs goal
   "fix my water to 8" / "undo that workout"
-  "I forgot reading yesterday"   → backfill until 12pm PT / 3pm ET
+  "I forgot reading yesterday"   → backfill until midnight PT next day
   "show my transformation"       → before/after image
   "make me a timelapse"          → MP4 of all photos
   ```
@@ -40,7 +42,7 @@ Built for a specific friend group ("Locked In, 75 Hard"). The code is participan
 |---|---|
 | 7am ET | Morning card: AI greeting + yesterday recap image + bookshelf + today's card with buttons |
 | 9am ET | DM nudge for users with incomplete yesterday tasks |
-| 3pm ET / 12pm PT | Yesterday locks (no more backfill) |
+| midnight PT next day | Yesterday locks (no more backfill) |
 | 9pm ET | Daily AI "spicy moment" sweep — posts one notable highlight or stays silent |
 | 10pm in user's TZ | Same-day DM nudge (ET/CT/MT/PT supported) |
 | 8pm ET Sun | Weekly digest image + AI reflection + transformation DMs |
@@ -86,7 +88,7 @@ bot/
 │   └── progress.py     # day-number + completion helpers
 └── assets/             # fonts (Inter)
 
-tests/                  # pytest — 64 tests
+tests/                  # pytest — 98 tests
 ```
 
 **Key architectural choices:**
@@ -96,6 +98,10 @@ tests/                  # pytest — 64 tests
 - **Stranger-DM gate.** Only `dm_registered=1` participants can invoke the LLM (cost protection). Strangers get a polite turn-away pointing to `/start`.
 - **Personal start_day.** `users.start_day` (default 1) tracks each user's personal Day 1. Late joiners get a higher value and finish later than the group.
 - **DB-driven timezones.** `users.timezone` controls which 10pm nudge the user gets. Seeded from `USER_TIMEZONES_*` env on first boot, then mutable via Luke's `set_user_timezone` tool.
+
+## Conversation audit script
+
+`scripts/audit_conversations.py` is a read-only ranker over the `conversation_log` table. It pulls the last N days of DM turns, scores each one with a small set of regex heuristics for state-claim patterns ("logged 135g", "you're at 8 cups", etc.) cross-referenced against the turn's `tools_called` JSON, and surfaces the top suspects for human review. It catches phantom-action candidates (state claim with no tool fired) and a handful of other anomalies. The detection is regex-based and intentionally narrow; the productized version of this lives in tracing and eval platforms that work against span data instead of stringly-typed log rows. Useful here as a fast local pass; not a substitute for a real evaluator.
 
 ## Tech stack
 
