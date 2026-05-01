@@ -10,6 +10,7 @@ from telegram.ext import ContextTypes
 
 from bot.config import ADMIN_USER_ID, CHALLENGE_DAYS, CHALLENGE_START_DATE
 from bot.handlers.daily_card import post_daily_card
+from bot.release_notes import CURRENT_VERSION, build_announcement
 from bot.utils.easter_eggs import post_milestone_if_needed
 from bot.utils.luke_ai import generate_morning_message, generate_weekly_reflection
 from bot.utils.progress import today_et, get_day_number, get_missing_tasks, is_all_complete
@@ -35,6 +36,20 @@ async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     chat_id = context.bot_data.get("group_chat_id")
+
+    # 0. Release notes — fire any unseen user-facing notes before the morning sequence.
+    #    Marker only advances on successful post, so a failed send retries tomorrow.
+    if chat_id:
+        try:
+            raw = await db.get_setting("last_announced_release_version")
+            last_seen = int(raw) if raw is not None else None
+            announcement = build_announcement(last_seen)
+            if announcement:
+                await context.bot.send_message(chat_id=chat_id, text=announcement)
+                await db.set_setting("last_announced_release_version", str(CURRENT_VERSION))
+                logger.info("release-notes: posted announcement, marker → v%d", CURRENT_VERSION)
+        except Exception as e:
+            logger.warning("release-notes: announcement failed (%s); will retry tomorrow", e)
 
     # Build yesterday's summary (used for AI prompt + recap image)
     yesterday_summary = None
