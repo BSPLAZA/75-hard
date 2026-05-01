@@ -773,10 +773,39 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
 
     elif tool_name == "undo_last_food":
         deleted = await db.delete_last_diet_entry(user_id, day)
-        if deleted:
-            entries = await db.get_diet_entries(user_id, day)
-            return f"Last entry removed. {len(entries)} entries remaining today."
-        return "Nothing to undo — no entries logged today."
+        if not deleted:
+            return "Nothing to undo — no entries logged today."
+
+        entries = await db.get_diet_entries(user_id, day)
+
+        # If removing the entry brought the user back below their numeric diet
+        # goal, un-flip diet_done. Mirrors log_food's auto-flip path — without
+        # this, a user who crossed the goal and then undid the crossing entry
+        # stays "diet done" while their actual log is below goal (silent
+        # incongruence between DM state and the daily card).
+        diet_unflipped = False
+        user = await db.get_user(user_id)
+        diet_plan = dict(user).get("diet_plan") if user else None
+        goal = _parse_diet_goal(diet_plan)
+        if goal:
+            goal_value, goal_unit = goal
+            total_for_goal = sum(
+                e.get("extracted_value", 0) or 0
+                for e in entries
+                if e.get("extracted_unit") == goal_unit
+            )
+            if total_for_goal < goal_value:
+                checkin = await db.get_checkin(user_id, day)
+                if checkin and checkin["diet_done"]:
+                    await db.toggle_diet(user_id, day)
+                    diet_unflipped = True
+
+        if diet_unflipped:
+            return (
+                f"REFRESH_CARD: Last entry removed. {len(entries)} entries remaining. "
+                f"You're now back below your goal — diet un-confirmed for today."
+            )
+        return f"Last entry removed. {len(entries)} entries remaining today."
 
     elif tool_name == "log_workout_dm":
         location = tool_input.get("location", "outdoor")
