@@ -25,7 +25,7 @@ PT = pytz.timezone("US/Pacific")
 async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """7 AM ET -- Daily morning sequence in one shot:
       1. Short AI greeting (with yesterday context for prompt only)
-      2. Yesterday's recap image (snapshot — lock isn't until 3pm ET)
+      2. Yesterday's recap image (snapshot — lock isn't until midnight PT tonight)
       3. Bookshelf image (if anyone read yesterday)
       4. Today's daily card with buttons
     """
@@ -87,7 +87,7 @@ async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             complete = [c for c in yesterday_dicts if is_all_complete(c)]
             recap_caption = (
                 f"Day {yesterday_day} recap — {len(complete)}/{len(yesterday_dicts)} done. "
-                f"Backfill until 12pm PT / 3pm ET."
+                f"Backfill until midnight PT tonight."
             )
             recap_buf = render_recap_image(yesterday_day, yesterday_dicts, CHALLENGE_DAYS)
             await context.bot.send_photo(chat_id=chat_id, photo=recap_buf, caption=recap_caption)
@@ -166,7 +166,7 @@ async def _nudge_for_tz(context: ContextTypes.DEFAULT_TYPE, tz_label: str) -> No
             f"Hey {user['name']} -- you have unchecked tasks for day {day}:\n\n"
             f"{missing_list}\n\n"
             "If you've done them, log them now.\n"
-            "You can also backfill until 12pm PT / 3pm ET tomorrow."
+            "You can also backfill until midnight PT tomorrow night."
         )
         try:
             await context.bot.send_message(chat_id=c["telegram_id"], text=text)
@@ -438,7 +438,7 @@ async def morning_after_reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None
                 text=(
                     f"hey -- you still have incomplete tasks from yesterday (day {yesterday}):\n\n"
                     f"{missing_list}\n\n"
-                    f"log them now if you did them. you have until 12pm PT / 3pm ET."
+                    f"log them now if you did them. you have until midnight PT tonight."
                 ),
             )
         except Exception:
@@ -446,11 +446,15 @@ async def morning_after_reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def cutoff_warning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """11 AM PT -- DM each user with incomplete yesterday tasks; lock is in 1 hour.
+    """11 PM PT -- DM each user with incomplete yesterday tasks; lock is in 1 hour.
 
-    Last call before noon_cutoff_job locks yesterday for good. Aimed at users
+    Last call before midnight_cutoff_job locks yesterday for good. Aimed at users
     like Cam who silently lose a day because they missed the morning reminder
     and never realized the cutoff was approaching.
+
+    Schedule moved from 11am PT to 11pm PT in v51 — group asked for full-day
+    backfill flexibility ("midnight PT next day"), so the warning slid to one
+    hour before midnight.
     """
     db = context.bot_data["db"]
     from bot.utils.progress import get_current_challenge_day
@@ -477,7 +481,7 @@ async def cutoff_warning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                     f"⏰ ONE HOUR until day {yesterday} locks. you're still incomplete:\n\n"
                     f"{missing_list}\n\n"
                     f"hit me back with what you actually did and I'll backfill it. "
-                    f"after 12pm PT / 3pm ET the day is permanently closed."
+                    f"after midnight PT the day is permanently closed."
                 ),
             )
             sent += 1
@@ -486,14 +490,25 @@ async def cutoff_warning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     await db.log_event(None, None, "cutoff_warning", f"day={yesterday} sent={sent}")
 
 
-async def noon_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """12 PM PT -- Lock previous day, flag incomplete users to admin."""
-    day = get_day_number(CHALLENGE_START_DATE, today_et())
+async def midnight_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """12 AM PT (midnight) -- Lock previous day, flag incomplete users to admin.
+
+    Schedule moved from noon PT to midnight PT in v51 — group asked for the
+    latest possible cutoff that still preserves the day-boundary semantic.
+
+    NOTE on day reference: at 00:00 PT we're at 03:00 ET, which is past the
+    ET calendar rollover but BEFORE the 7am ET morning card posts. So
+    `today_et()` would already give us the new calendar day (off-by-one),
+    while `get_current_challenge_day(db)` reads from `daily_cards` and
+    correctly returns the still-active card day. Use the DB-anchored helper.
+    """
+    db = context.bot_data["db"]
+    from bot.utils.progress import get_current_challenge_day
+    day = await get_current_challenge_day(db)
     yesterday = day - 1
     if yesterday < 1:
         return
 
-    db = context.bot_data["db"]
     checkins = await db.get_all_checkins_for_day(yesterday)
     for c in checkins:
         if not is_all_complete(c):
@@ -576,10 +591,12 @@ async def daily_backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 def schedule_jobs(job_queue) -> None:
     """Register all daily scheduled jobs.
 
-    Schedule (decided 2026-04-16):
+    Schedule (revised 2026-05-01 from group feedback — cutoff moved to
+    midnight PT for full-day backfill flexibility):
       7am  ET            morning card (greeting + yesterday recap + bookshelf + today)
       9am  ET            DM reminder for users with incomplete yesterday tasks
-      12pm PT (3pm ET)   yesterday locks; admin warnings for incompletes
+      11pm PT (2am ET)   final warning DM (1 hour before lock)
+      12am PT (3am ET)   yesterday locks; admin warnings for incompletes
       10pm ET            same-day DM nudge for east-coast users
       10pm PT (1am ET)   same-day DM nudge for west-coast users
       8pm  ET Sunday     weekly digest
@@ -594,10 +611,10 @@ def schedule_jobs(job_queue) -> None:
         morning_after_reminder_job, time=time(9, 0, tzinfo=ET), name="morning_after_reminder"
     )
     job_queue.run_daily(
-        cutoff_warning_job, time=time(11, 0, tzinfo=PT), name="cutoff_warning"
+        cutoff_warning_job, time=time(23, 0, tzinfo=PT), name="cutoff_warning"
     )
     job_queue.run_daily(
-        noon_cutoff_job, time=time(12, 0, tzinfo=PT), name="noon_cutoff"
+        midnight_cutoff_job, time=time(0, 0, tzinfo=PT), name="midnight_cutoff"
     )
     job_queue.run_daily(
         nudge_job_et, time=time(22, 0, tzinfo=ET), name="nudge_et"

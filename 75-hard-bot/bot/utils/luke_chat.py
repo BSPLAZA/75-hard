@@ -89,7 +89,7 @@ WHAT YOU CAN DO:
 - Log feedback, bugs, suggestions
 - Generate transformation photos and timelapses
 - Give honest assessments of how someone or the group is doing
-- Backfill yesterday's tasks before noon PT (use backfill_task for workout/water/reading/diet). Day 1 has a grace window — Day 1 backfills are allowed any time, no cutoff. From Day 2 onwards, the noon PT cutoff applies.
+- Backfill yesterday's tasks before midnight PT tonight (use backfill_task for workout/water/reading/diet). Day 1 has a grace window — Day 1 backfills are allowed any time, no cutoff. From Day 2 onwards, the window closes at midnight PT of the day after the missed day.
 - Backfill yesterday's PHOTO with request_backfill_photo. Use when the user says they forgot to send their progress photo for a previous day. The tool will prompt them to send the photo; the next photo they DM will be saved to that day. Same Day 1 grace applies.
 
 WHICH DAY IS THIS FOR (CRITICAL — read this carefully):
@@ -347,7 +347,7 @@ TOOLS = [
     },
     {
         "name": "backfill_task",
-        "description": "Log a non-photo task for a previous day that the user forgot. Defaults to YESTERDAY but accepts an explicit day_number for any past day in the user's challenge window. Same noon PT cutoff applies per day (Day 1 grace exception). Use when user says they forgot to log something from a past day.",
+        "description": "Log a non-photo task for a previous day that the user forgot. Defaults to YESTERDAY but accepts an explicit day_number for any past day in the user's challenge window. The backfill window for a missed day closes at midnight PT of the following day (Day 1 grace exception — always allowed). Use when user says they forgot to log something from a past day.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -370,7 +370,7 @@ TOOLS = [
     },
     {
         "name": "request_backfill_photo",
-        "description": "Set up a one-shot photo intake. The NEXT photo the user DMs will be saved as their progress photo for the specified day. Pass day_number=current_day for TODAY's progress photo (most common case — when user asks about saving today's photo or sends a photo with no caption). Pass day_number=yesterday for a missed previous day. Allowed days: today, yesterday (noon PT cutoff), Day 1 (always graced).",
+        "description": "Set up a one-shot photo intake. The NEXT photo the user DMs will be saved as their progress photo for the specified day. Pass day_number=current_day for TODAY's progress photo (most common case — when user asks about saving today's photo or sends a photo with no caption). Pass day_number=yesterday for a missed previous day. Allowed days: today, yesterday (window closes at midnight PT tonight), Day 1 (always graced).",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -909,14 +909,16 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
 
         yesterday = day - 1
 
-        # Per-day cutoff: backfilling is allowed for yesterday until noon PT next day.
-        # Anything older is locked. Day 1 has a grace window — always allowed regardless of clock.
+        # Per-day cutoff (revised v51, was noon PT): backfill of yesterday is open
+        # for the entire current card-day. Lock fires when the card_day rolls
+        # forward (effectively at midnight PT — the midnight_cutoff_job at 00:00
+        # PT, augmented by the next morning card at 07:00 ET). Anything older
+        # than yesterday is permanently closed. Day 1 has a grace window —
+        # always allowed regardless of clock.
         is_day_1_grace = target_day == 1
         if not is_day_1_grace:
             if target_day < yesterday:
                 return f"DENIED: Day {target_day} is more than 1 day old — backfill window for that day is permanently closed. Ask the organizer for grace."
-            if target_day == yesterday and now_pt.hour >= 12:
-                return f"DENIED: It's past 12pm PT / 3pm ET. Day {target_day}'s tasks are locked in. Backfill window closed."
 
         # Ensure checkin exists for the target day
         checkin = await db.get_checkin(user_id, target_day)
@@ -962,7 +964,7 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
     elif tool_name == "request_backfill_photo":
         import pytz as _pytz
         _PT = _pytz.timezone("US/Pacific")
-        now_pt = datetime.now(_PT)
+        now_pt = datetime.now(_PT)  # used below for create_checkin date math
 
         target_day = int(tool_input.get("day_number", day - 1))
         yesterday = day - 1
@@ -974,10 +976,10 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
         if target_day < yesterday:
             return f"DENIED: Day {target_day} is too far back. Photos can only be backfilled for yesterday."
 
-        # Day 1 grace: skip noon PT cutoff for Day 1 specifically.
-        is_day_1_grace = target_day == 1
-        if not is_day_1_grace and target_day == yesterday and now_pt.hour >= 12:
-            return "DENIED: It's past 12pm PT / 3pm ET. Yesterday's photo window closed."
+        # Day 1 grace skips the cutoff; otherwise yesterday's photo window stays
+        # open for the full card-day (lock fires when card_day rolls forward
+        # at midnight PT, per the v51 cutoff revision).
+        # NOTE: target_day < yesterday already returned above.
 
         # Ensure the checkin row exists so log_photo will succeed.
         checkin = await db.get_checkin(user_id, target_day)

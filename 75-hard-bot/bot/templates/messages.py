@@ -91,23 +91,24 @@ Two ways. Use whichever's faster.
    "ate chicken & rice, 40g protein" → tracks vs your diet goal
    "fix my water to 8"          → corrects mistakes
    "undo that workout"          → undo
-   "I forgot reading yesterday" → backfill (until 12pm PT / 3pm ET)
+   "I forgot reading yesterday" → backfill (until midnight PT tonight)
    "how am i doing"             → status check
    "show my transformation"     → before/after image
 
 ━━━ DAILY RHYTHM (all times shown ET / PT) ━━━
-  7am ET / 4am PT  — new card + yesterday recap image
-  9am ET / 6am PT  — DM if yesterday's incomplete
-  3pm ET / 12pm PT — yesterday LOCKS (no more backfill)
-  10pm ET — final nudge for east-coast users
-  10pm PT — final nudge for west-coast users
+  7am ET / 4am PT   — new card + yesterday recap image
+  9am ET / 6am PT   — DM if yesterday's incomplete
+  10pm ET           — final nudge for east-coast users
+  10pm PT / 1am ET  — final nudge for west-coast users
+  2am ET / 11pm PT  — final warning if yesterday still incomplete (1hr to lock)
+  3am ET / 12am PT  — yesterday LOCKS (no more backfill)
 
 ━━━ FAQ ━━━
 Q: What if I work out after midnight?
 A: Log it for the day you're in. If it's 1 AM Tuesday, it counts for Tuesday.
 
 Q: What if I forget to log something?
-A: You can backfill until 12pm PT / 3pm ET the next day. DM me what you forgot.
+A: You can backfill until midnight PT (3am ET) the next day. DM me what you forgot.
 
 Q: What counts as a "cup" of water?
 A: 8 oz / ~250 ml. A gallon = 16 cups = 128 oz.
