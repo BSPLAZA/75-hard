@@ -1,7 +1,5 @@
 # Luke — 75 Hard Accountability Bot
 
-> ↗ Take-home submission for Arize AI: [PLACEHOLDER]
-
 A Telegram bot that runs a 75 Hard challenge for a closed group of friends. Tracks the 5 daily tasks, posts a daily card with one-tap buttons, holds an LLM-powered DM with each participant, and surprises the group with milestone callouts and "spicy moment" highlights.
 
 Built for a specific friend group ("Locked In, 75 Hard"). The code is participant-agnostic — all roster info comes from env vars, so the same bot can run a different group with no code changes.
