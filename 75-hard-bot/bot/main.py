@@ -1,6 +1,7 @@
 """Main entry point for the 75 Hard Telegram bot."""
 
 import logging
+import os
 import random
 from pathlib import Path
 
@@ -131,8 +132,39 @@ async def handle_new_group(update: Update, context) -> None:
                 logger.warning("Could not create invite link: %s", e)
 
 
+def _setup_phoenix_tracing() -> None:
+    """Register the Phoenix tracer + Anthropic instrumentor before any LLM call.
+
+    Skipped silently if PHOENIX_API_KEY is unset — keeps test environments and
+    Phoenix-less deploys functional. Must run once at startup, before any
+    anthropic.Anthropic(...) client is constructed.
+    """
+    if not os.getenv("PHOENIX_API_KEY"):
+        logger.info("phoenix: PHOENIX_API_KEY not set; tracing disabled")
+        return
+    try:
+        from phoenix.otel import register
+        from openinference.instrumentation.anthropic import AnthropicInstrumentor
+
+        tracer_provider = register(
+            project_name=os.getenv("PHOENIX_PROJECT_NAME", "luke-75-hard"),
+            endpoint=os.getenv("PHOENIX_COLLECTOR_ENDPOINT"),
+            auto_instrument=False,
+        )
+        AnthropicInstrumentor().instrument(tracer_provider=tracer_provider)
+        logger.info(
+            "phoenix: tracing enabled, project=%s endpoint=%s",
+            os.getenv("PHOENIX_PROJECT_NAME", "luke-75-hard"),
+            os.getenv("PHOENIX_COLLECTOR_ENDPOINT"),
+        )
+    except Exception as exc:
+        logger.warning("phoenix: failed to enable tracing (%s); continuing without", exc)
+
+
 def main() -> None:
     """Build the application, register handlers, and start polling."""
+    _setup_phoenix_tracing()
+
     app = (
         Application.builder()
         .token(BOT_TOKEN)
