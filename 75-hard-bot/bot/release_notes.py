@@ -12,9 +12,9 @@ RELEASES: list[dict] = [
     {
         "version": 51,
         "user_facing": (
-            "heads up — yesterday's log no longer locks at 12pm PT. "
-            "you've got until midnight pacific to log late stuff for the day before. "
-            "DM me if you forgot something."
+            "yo y'all quick update. log ain't lockin at noon no more. "
+            "you got till midnight pacific to fix yesterday's stuff. "
+            "forgot somethin? hit my dms i got you fr."
         ),
     },
     {
