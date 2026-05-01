@@ -909,16 +909,30 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
 
         yesterday = day - 1
 
-        # Per-day cutoff (revised v51, was noon PT): backfill of yesterday is open
-        # for the entire current card-day. Lock fires when the card_day rolls
-        # forward (effectively at midnight PT — the midnight_cutoff_job at 00:00
-        # PT, augmented by the next morning card at 07:00 ET). Anything older
-        # than yesterday is permanently closed. Day 1 has a grace window —
-        # always allowed regardless of clock.
+        # Per-day cutoff (revised v51, was noon PT): strict midnight PT lock.
+        # Backfill window for day-N stays open during all of day-N's PT calendar
+        # date AND the following PT calendar date (= "today" while card_day = N+1).
+        # Lock fires at 00:00 PT of the day after that — i.e., once
+        # (pt_today - target_anchor_pt_date) > 1, the window is closed.
+        # Day 1 has a grace window — always allowed regardless of clock.
         is_day_1_grace = target_day == 1
         if not is_day_1_grace:
             if target_day < yesterday:
                 return f"DENIED: Day {target_day} is more than 1 day old — backfill window for that day is permanently closed. Ask the organizer for grace."
+
+            # Strict midnight PT cutoff for target_day == yesterday OR target_day == today.
+            # Anchor preferred: the checkin row's checkin_date (set when the morning
+            # card posted, == ET-date which equals PT-date since cards post 7am ET / 4am PT).
+            # Fallback (no row yet): subtract day-offset from current PT date.
+            target_checkin_row = await db.get_checkin(user_id, target_day)
+            if target_checkin_row and target_checkin_row["date"]:
+                target_anchor = date.fromisoformat(target_checkin_row["date"])
+            else:
+                offset_days = day - target_day
+                target_anchor = now_pt.date() - timedelta(days=offset_days)
+            days_past_anchor = (now_pt.date() - target_anchor).days
+            if days_past_anchor > 1:
+                return f"DENIED: It's past midnight PT — Day {target_day} is locked. Backfill window closed."
 
         # Ensure checkin exists for the target day
         checkin = await db.get_checkin(user_id, target_day)
@@ -976,10 +990,20 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
         if target_day < yesterday:
             return f"DENIED: Day {target_day} is too far back. Photos can only be backfilled for yesterday."
 
-        # Day 1 grace skips the cutoff; otherwise yesterday's photo window stays
-        # open for the full card-day (lock fires when card_day rolls forward
-        # at midnight PT, per the v51 cutoff revision).
-        # NOTE: target_day < yesterday already returned above.
+        # Strict midnight PT cutoff (v51): photo backfill window for target_day
+        # closes at 00:00 PT of the day after target_day's PT calendar date.
+        # Day 1 always graced. NOTE: target_day < yesterday already denied above.
+        is_day_1_grace = target_day == 1
+        if not is_day_1_grace and target_day == yesterday:
+            target_checkin_row = await db.get_checkin(user_id, target_day)
+            if target_checkin_row and target_checkin_row["date"]:
+                target_anchor = date.fromisoformat(target_checkin_row["date"])
+            else:
+                offset_days = day - target_day
+                target_anchor = now_pt.date() - timedelta(days=offset_days)
+            days_past_anchor = (now_pt.date() - target_anchor).days
+            if days_past_anchor > 1:
+                return "DENIED: It's past midnight PT — yesterday's photo window closed."
 
         # Ensure the checkin row exists so log_photo will succeed.
         checkin = await db.get_checkin(user_id, target_day)
