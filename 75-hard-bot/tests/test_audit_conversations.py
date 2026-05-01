@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.audit_conversations import score_row, summarize
+from scripts.audit_conversations import render_text, score_row, summarize
 
 
 class TestScoreRow:
@@ -90,3 +90,53 @@ class TestSummarize:
         # Tool fire counts pick up legitimate row 2
         assert summary["tool_fires"]["log_food"] == 1
         assert summary["user_turns"]["Alice"] == 2
+
+
+class TestSourceCoverage:
+    def test_summary_groups_by_source(self):
+        """The audit must show DM / group / scheduled splits so we can see
+        coverage gaps at a glance. This is the load-bearing assertion for
+        the conversation_log coverage fix."""
+        rows = [
+            {"id": 1, "source": "dm", "user_name": "Alice",
+             "user_message": "logged my water", "luke_response": "got it",
+             "tools_called": json.dumps(["log_water_dm"]), "timestamp": "2026-05-01 10:00"},
+            {"id": 2, "source": "dm", "user_name": "Bob",
+             "user_message": "thanks", "luke_response": "you got it",
+             "tools_called": None, "timestamp": "2026-05-01 11:00"},
+            {"id": 3, "source": "scheduled", "user_name": None,
+             "user_message": "[schedule: morning]", "luke_response": "day 18 lets go",
+             "tools_called": None, "timestamp": "2026-05-01 07:00"},
+            {"id": 4, "source": "group", "user_name": "Alice",
+             "user_message": "@luke what day are we on", "luke_response": "day 18",
+             "tools_called": None, "timestamp": "2026-05-01 08:00"},
+        ]
+        summary = summarize(rows, top_n=10)
+        assert summary["by_source"] == {"dm": 2, "scheduled": 1, "group": 1}
+
+    def test_render_text_shows_source_breakdown(self):
+        """The summary header must include the by-source line so a reader
+        sees coverage immediately, not buried in raw counts."""
+        rows = [
+            {"id": 1, "source": "dm", "user_name": "Alice",
+             "user_message": "x", "luke_response": "y", "tools_called": None,
+             "timestamp": "2026-05-01 10:00"},
+            {"id": 2, "source": "scheduled", "user_name": None,
+             "user_message": "[schedule: morning]", "luke_response": "z",
+             "tools_called": None, "timestamp": "2026-05-01 07:00"},
+        ]
+        summary = summarize(rows, top_n=10)
+        text = render_text(summary)
+        assert "by source:" in text
+        assert "dm=1" in text
+        assert "scheduled=1" in text
+
+    def test_unknown_source_falls_back(self):
+        """Rows with NULL source (legacy data) shouldn't crash the audit."""
+        rows = [
+            {"id": 1, "source": None, "user_name": "Alice",
+             "user_message": "x", "luke_response": "y", "tools_called": None,
+             "timestamp": "2026-05-01 10:00"},
+        ]
+        summary = summarize(rows, top_n=10)
+        assert "(unknown)" in summary["by_source"]

@@ -221,6 +221,40 @@ class Database:
         except Exception:
             pass
 
+    async def log_scheduled_emission(
+        self,
+        emission_type: str,
+        luke_response: str | None,
+        *,
+        triggered_by: str = "schedule",
+        error: str | None = None,
+    ) -> None:
+        """Log a Luke emission that wasn't user-triggered.
+
+        Scheduled-job and admin-test outputs go to the group chat with no
+        per-user telegram_id. Stored with telegram_id=0 (sentinel for "system")
+        and source='scheduled' so the audit pipeline sees them. Fire-and-forget.
+
+        emission_type: short label e.g. 'morning', 'weekly', 'spicy', 'recap'.
+        triggered_by: 'schedule' (job) or 'admin_test' (admin command preview).
+        """
+        user_message = f"[{triggered_by}: {emission_type}]"
+        body = luke_response if luke_response else "[empty]"
+        if error:
+            body = f"[ERROR] {error}"
+        try:
+            await self._conn.execute(
+                """
+                INSERT INTO conversation_log
+                    (telegram_id, user_name, source, user_message, luke_response, tools_called)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (0, None, "scheduled", user_message, body, None),
+            )
+            await self._conn.commit()
+        except Exception:
+            pass
+
     async def get_recent_conversations(
         self,
         limit: int = 50,

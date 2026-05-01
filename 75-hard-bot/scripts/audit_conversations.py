@@ -126,6 +126,7 @@ def summarize(rows: list[dict], top_n: int) -> dict:
     enriched = []
     tool_fires = Counter()
     user_turns = Counter()
+    by_source = Counter()
 
     for r in rows:
         score = score_row(r.get("luke_response"), r.get("tools_called"))
@@ -134,6 +135,7 @@ def summarize(rows: list[dict], top_n: int) -> dict:
             tool_fires[t] += 1
         if r.get("user_name"):
             user_turns[r["user_name"]] += 1
+        by_source[r.get("source") or "(unknown)"] += 1
 
     suspect = [
         e for e in enriched
@@ -157,6 +159,7 @@ def summarize(rows: list[dict], top_n: int) -> dict:
         "phantom_filter_hits": sum(1 for e in enriched if e["phantom_filter_hit"]),
         "tool_fires": dict(tool_fires.most_common()),
         "user_turns": dict(user_turns.most_common()),
+        "by_source": dict(by_source.most_common()),
         "top_suspect": suspect[:top_n],
     }
 
@@ -168,6 +171,9 @@ def render_text(summary: dict) -> str:
     lines.append("LUKE CONVERSATION AUDIT")
     lines.append("=" * 60)
     lines.append(f"Total turns:         {summary['total_turns']}")
+    if summary.get("by_source"):
+        parts = ", ".join(f"{src}={n}" for src, n in summary["by_source"].items())
+        lines.append(f"  by source:         {parts}")
     lines.append(f"Suspect turns:       {summary['suspect_turns']}")
     lines.append(f"  phantom claims:    {summary['phantom_state_claims']}")
     lines.append(f"  action-no-tool:    {summary['action_phrase_hits']}")

@@ -532,6 +532,7 @@ async def admin_test_morning_command(
         active = await db.get_active_users()
         all_users = await db.get_all_users()
         msg = await generate_morning_message(day + 1, len(active), len(all_users), yesterday_summary)
+        await db.log_scheduled_emission("morning", msg, triggered_by="admin_test")
         await _admin_reply(update, context, msg or "AI generation failed - check API key.")
     except Exception as e:
         import traceback
@@ -605,6 +606,7 @@ async def admin_test_digest_command(
             user_stats=data["user_stats"],
             reading_log=data["reading_log"],
         )
+        await db.log_scheduled_emission("weekly", reflection, triggered_by="admin_test")
 
         caption = reflection or f"Week {data['week_number']} digest"
 

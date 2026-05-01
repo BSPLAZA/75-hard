@@ -73,6 +73,7 @@ async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         latency_ms = int((time_mod.monotonic() - start) * 1000)
         await db.log_event(None, None, "ai_morning", f"day={day}", latency_ms=latency_ms)
+        await db.log_scheduled_emission("morning", ai_message)
         if ai_message:
             try:
                 await context.bot.send_message(chat_id=chat_id, text=ai_message)
@@ -387,6 +388,7 @@ async def weekly_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         latency_ms = int((time_mod.monotonic() - start) * 1000)
         await db.log_event(None, None, "ai_weekly", f"week={data['week_number']}", latency_ms=latency_ms)
+        await db.log_scheduled_emission("weekly", reflection)
 
         caption = reflection or f"Week {data['week_number']} digest"
 
@@ -568,6 +570,7 @@ async def spicy_moment_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     text = await generate_spicy_moment(day, today_dicts, yesterday_dicts, food_summary)
     latency_ms = int((time_mod.monotonic() - start) * 1000)
     await db.log_event(None, None, "ai_spicy", f"day={day} fired={'yes' if text else 'no'}", latency_ms=latency_ms)
+    await db.log_scheduled_emission("spicy", text)
     if not text:
         return
     try:
