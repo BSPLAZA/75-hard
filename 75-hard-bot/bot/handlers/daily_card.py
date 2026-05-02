@@ -74,12 +74,21 @@ async def post_daily_card(
     active_count = len(active_users)
     prize_pool = active_count * 75
 
+    # Fetch active penances whose makeup_day = today, keyed by user.
+    # Used by the renderer to show 2× targets on the right cells.
+    penances_by_user: dict[int, list[dict]] = {}
+    for u in active_users:
+        rows = await db.get_penances_for_makeup_day(u["telegram_id"], day_number)
+        if rows:
+            penances_by_user[u["telegram_id"]] = [dict(r) for r in rows]
+
     card_text = render_card(
         day_number=day_number,
         active_count=active_count,
         prize_pool=prize_pool,
         checkins=checkin_dicts,
         prev_checkins=prev_checkins,
+        penances_by_user=penances_by_user,
     )
 
     msg = await context.bot.send_message(
@@ -125,12 +134,19 @@ async def refresh_card(
     active_count = len(active_users)
     prize_pool = active_count * 75
 
+    penances_by_user: dict[int, list[dict]] = {}
+    for u in active_users:
+        rows = await db.get_penances_for_makeup_day(u["telegram_id"], day_number)
+        if rows:
+            penances_by_user[u["telegram_id"]] = [dict(r) for r in rows]
+
     card_text = render_card(
         day_number=day_number,
         active_count=active_count,
         prize_pool=prize_pool,
         checkins=checkin_dicts,
         prev_checkins=prev_checkins,
+        penances_by_user=penances_by_user,
     )
 
     try:
