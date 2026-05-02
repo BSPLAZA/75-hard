@@ -1201,12 +1201,15 @@ async def _admin_arbitrate_command(update, context):
             )
             return
         # Resolve the arbitration row, then create a fresh in_progress penance
-        # row for today's makeup. Two rows = full audit trail.
+        # row. makeup_day must be in the future relative to missed_day (otherwise
+        # the cutoff sweep can't grade it), so default to today but bump if
+        # arbitration concluded same-day or earlier than missed_day+1.
+        makeup_day = max(today, r["missed_day"] + 1)
         await db.resolve_penance(pid, "passed")  # arbitration closed (passed-with-condition)
         await db.add_penance(
             telegram_id=r["telegram_id"],
             missed_day=r["missed_day"],
-            makeup_day=today,
+            makeup_day=makeup_day,
             task=penance_task,
             retroactive=False,
             detail=f"arbitration #{pid} verdict=penance",
@@ -1214,21 +1217,28 @@ async def _admin_arbitrate_command(update, context):
         )
         await db.log_event(
             r["telegram_id"], None, "arbitration_resolved",
-            f"id={pid} verdict=penance task={penance_task}",
+            f"id={pid} verdict=penance task={penance_task} makeup_day={makeup_day}",
         )
         msg = (
             f"case #{pid} for {name} → penance. doing 2× {penance_task.replace('_', ' ')} "
-            f"today (day {today}) to make it right."
+            f"on day {makeup_day} to make it right."
         )
     else:  # fail
+        # Mark arbitration failed AND eliminate the user so the daily card and
+        # active-list reflect reality immediately. Payment confirmation still
+        # runs through /admin_settle_failure separately (which is idempotent
+        # against already-eliminated users).
         await db.resolve_penance(pid, "failed")
+        if dict(user).get("active"):
+            await db.eliminate_user(r["telegram_id"], failed_day=today)
         await db.log_event(
             r["telegram_id"], None, "arbitration_resolved",
-            f"id={pid} verdict=fail",
+            f"id={pid} verdict=fail eliminated_day={today}",
         )
         msg = (
             f"case #{pid} for {name} → fail. squad called it. "
-            f"run /admin_settle_failure {name} to wrap the residual payment."
+            f"{name} is out as of day {today}. "
+            f"next: /admin_settle_failure {name} to confirm the residual payment."
         )
 
     # Group acknowledgement.

@@ -28,7 +28,7 @@ RELEASES: list[dict] = [
     {
         "version": 54,
         "user_facing": (
-            "big drop today, here's what's new:\n"
+            "big drop today, here's what's new\n"
             "• penance system live. miss somethin yesterday? do it 2x today and stay in. "
             "just dm me ('i missed water yesterday' etc) and i'll set it up.\n"
             "• diet violations go to group vote. wine, cheat meals → squad decides pass, "
@@ -68,4 +68,4 @@ def build_announcement(last_seen: int | None, releases: list[dict] | None = None
         return notes[0]
     # Multiple notes: header + each note as its own block. Two newlines between
     # blocks for visual breathing room.
-    return "yo couple updates fr:\n\n" + "\n\n".join(notes)
+    return "yo couple updates fr\n\n" + "\n\n".join(notes)

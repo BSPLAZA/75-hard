@@ -94,9 +94,12 @@ def target_for_task(task: str, *, in_penance: bool = False) -> int:
 def is_target_met(checkin_row: dict | None, task: str, *, in_penance: bool = False) -> bool:
     """Did this user hit the target on the given day?
 
-    For booleans (workouts, reading, etc.), penance doubling means the user
-    must have a value of >= 2 on the makeup day. The schema's *_done columns
-    are integers, so log_workout_dm needs to bump them to 2 on penance days.
+    Verification is strict for water (the only counter-backed task — base 16,
+    penance 32 cups). For boolean tasks (workouts, reading, photo) the schema
+    only stores 0/1, so penance is HONOR SYSTEM in v1: cutoff sweep passes
+    in_penance=False for booleans and accepts a single completion as recovery.
+    Callers that want strict 2× boolean verification need to track it in
+    application logic, not via this helper.
     """
     if checkin_row is None:
         return False

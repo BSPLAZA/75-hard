@@ -551,10 +551,14 @@ async def midnight_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
          can pay the residual buy-in to the prize pool.
 
     NOTE on day reference: at 00:00 PT we're at 03:00 ET, which is past the
-    ET calendar rollover but BEFORE the 7am ET morning card posts. So
-    `today_et()` would already give us the new calendar day (off-by-one),
-    while `get_current_challenge_day(db)` reads from `daily_cards` and
-    correctly returns the still-active card day. Use the DB-anchored helper.
+    ET calendar rollover but BEFORE the next 7am ET morning card posts.
+    daily_cards still holds the card for the day that JUST ended (the next
+    day's card writes 4 hours from now). So:
+      - `get_current_challenge_day(db)` returns the just-ended day → that's
+        the day we lock here. Bind it to `yesterday`.
+      - `day` = yesterday + 1 is the new day starting at this midnight and
+        will get its card posted in 4 hours. New penances created here use
+        makeup_day=day so the makeup window aligns with the new active day.
     """
     from bot.config import (
         BUY_IN, PRIZE_POOL_VENMO_USERNAME, PRIZE_POOL_ZELLE_PHONE,
@@ -563,10 +567,10 @@ async def midnight_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     from bot.utils.progress import get_current_challenge_day
 
     db = context.bot_data["db"]
-    day = await get_current_challenge_day(db)
-    yesterday = day - 1
+    yesterday = await get_current_challenge_day(db)  # the day whose card was active until now
     if yesterday < 1:
         return
+    day = yesterday + 1  # the new day starting at this midnight
 
     failed_users: set[int] = set()  # users whose penance just failed → self-fail prompt
 
@@ -601,31 +605,36 @@ async def midnight_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
 
     # Sweep 2: auto-create penances for unresolved yesterday misses.
-    # If user got the morning nudge and never replied, the penance-able tasks
-    # default to penance (not auto-fail) per design Q2. Binary diet violations
-    # stay in admin-warn state since they need arbitration, not penance.
-    checkins = await db.get_all_checkins_for_day(yesterday)
-    for c in checkins:
-        c = dict(c)
-        if is_all_complete(c):
+    # Drive from active_users (not just users who have a checkin row) — if a
+    # user never logged anything yesterday, get_all_checkins_for_day returns
+    # nothing for them and they'd silently skip the auto-penance sweep. Treat
+    # missing checkin as all tasks missed.
+    for u in active_users:
+        u = dict(u)
+        c_row = await db.get_checkin(u["telegram_id"], yesterday)
+        c = dict(c_row) if c_row else {}
+        if c and is_all_complete(c):
             continue
         for task in PENANCE_ABLE_TASKS:
             column, _ = TASK_TARGETS[task]
             if c.get(column):
                 continue  # task was actually done
-            existing = await db.get_penances_for_missed_day(c["telegram_id"], yesterday)
+            existing = await db.get_penances_for_missed_day(u["telegram_id"], yesterday)
             if any(dict(r)["task"] == task for r in existing):
                 continue  # already declared (in_progress, recovered, or failed)
             await db.add_penance(
-                telegram_id=c["telegram_id"],
+                telegram_id=u["telegram_id"],
                 missed_day=yesterday,
                 makeup_day=day,
                 task=task,
             )
             await db.log_event(
-                c["telegram_id"], None, "penance_auto_created",
+                u["telegram_id"], None, "penance_auto_created",
                 f"task={task} missed_day={yesterday}",
             )
+
+    # Refresh checkins list for sweep 4 (admin warning).
+    checkins = await db.get_all_checkins_for_day(yesterday)
 
     # Sweep 3: notify users with failed penances + admin warning for binary misses.
     venmo = PRIZE_POOL_VENMO_USERNAME

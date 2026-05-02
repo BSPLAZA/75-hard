@@ -331,6 +331,21 @@ def test_admin_arbitrate_supports_three_verdicts():
     assert "PENANCE_ABLE_TASKS" in src
 
 
+def test_admin_arbitrate_fail_eliminates_user():
+    """Source-level: fail verdict must call eliminate_user so the user's
+    active flag flips immediately. Without this, the user stays active
+    until /admin_settle_failure is run separately."""
+    src = inspect.getsource(admin_module._admin_arbitrate_command)
+    assert "eliminate_user" in src
+
+
+def test_admin_arbitrate_penance_uses_safe_makeup_day():
+    """Source-level: penance verdict must compute makeup_day as
+    max(today, missed_day + 1) so it's never in the past."""
+    src = inspect.getsource(admin_module._admin_arbitrate_command)
+    assert "max(today" in src or "max(today," in src or "missed_day\"] + 1" in src
+
+
 def test_arbitration_poll_handler_module_exists():
     """The PollAnswerHandler is wired separately."""
     from bot.handlers import arbitration

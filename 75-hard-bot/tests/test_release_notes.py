@@ -15,7 +15,7 @@ def test_first_run_picks_up_only_non_empty_notes():
     ]
     msg = build_announcement(None, fixtures)
     # 2+ notes → bulleted header format
-    assert "yo couple updates fr:" in msg
+    assert "yo couple updates fr" in msg
     assert "first thing" in msg
     assert "third thing" in msg
 
@@ -44,7 +44,7 @@ def test_partial_catch_up_returns_only_unseen():
         {"version": 53, "user_facing": "fifty-three"},
     ]
     msg = build_announcement(50, fixtures)
-    assert "yo couple updates fr:" in msg
+    assert "yo couple updates fr" in msg
     assert "fifty-one" in msg
     assert "fifty-three" in msg
     assert "fifty\n" not in msg  # version 50 already seen, must NOT appear
@@ -130,4 +130,4 @@ def test_production_first_run_has_multi_update_header():
     header path because there are 2 notes."""
     msg = build_announcement(None)
     assert msg is not None
-    assert "yo couple updates fr:" in msg.lower() or "couple updates" in msg.lower()
+    assert "yo couple updates fr" in msg.lower() or "couple updates" in msg.lower()

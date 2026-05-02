@@ -109,8 +109,12 @@ async def db_with_users():
             "UPDATE users SET dm_registered = 1 WHERE telegram_id = ?", (uid,)
         )
     await database._conn.commit()
-    # Seed a daily_cards row so get_current_challenge_day returns day 18.
-    await database.save_card(day_number=18, date="2026-05-02", message_id=1, chat_id=-1)
+    # Seed a daily_cards row matching reality at the midnight-cutoff moment:
+    # the most recent card is for the day that JUST ended. The next day's
+    # card hasn't posted yet (it'll post 4 hours later at 7am ET). So
+    # get_current_challenge_day returns 17, the cutoff job binds that to
+    # `yesterday`, and creates new penances with makeup_day=18 (the new day).
+    await database.save_card(day_number=17, date="2026-05-01", message_id=1, chat_id=-1)
     yield database
     await database.close()
 
@@ -124,9 +128,10 @@ def _make_context(db, bot):
 async def test_cutoff_resolves_recovered_penance(db_with_users):
     """Penance with makeup_day=yesterday and water target met → recovered."""
     db = db_with_users
-    # Set up: Bryan in penance for water (missed day 17, makeup day 17 — wait no.
-    # Sweep runs at midnight PT day-rollover. day=18, yesterday=17. So we want
-    # makeup_day=17 (the day that just ended).
+    # Cutoff fires at midnight PT, locking the day whose card was just active.
+    # In our fixture that's day 17. Bryan's penance has makeup_day=17 (he was
+    # making up missed day 16 by doing 2× on day 17). Sweep evaluates whether
+    # day-17's checkin met the doubled target.
     pid = await db.add_penance(111, missed_day=16, makeup_day=17, task="water")
     # Bryan's day-17 checkin shows 32 cups (2x target met)
     await db.create_checkin(111, 17, "2026-05-01")
@@ -223,6 +228,10 @@ async def test_cutoff_auto_creates_penance_for_missed_action_task(db_with_users)
     assert "photo" in tasks
     # Diet is NOT penance-able (binary)
     assert "diet" not in tasks
+    # makeup_day must be the new day (yesterday + 1 = 18), so the user can
+    # actually do 2× during the new day's window.
+    for r in bryan_pens:
+        assert dict(r)["makeup_day"] == 18, f"unexpected makeup_day {dict(r)['makeup_day']}"
 
     kat_pens = await db.get_penances_for_missed_day(222, 17)
     assert len(kat_pens) == 0  # nothing missed → nothing auto-created
@@ -248,6 +257,28 @@ async def test_cutoff_does_not_auto_create_for_diet(db_with_users):
 
     pens = await db.get_penances_for_missed_day(111, 17)
     assert len(pens) == 0
+
+
+@pytest.mark.asyncio
+async def test_cutoff_auto_creates_penance_for_user_with_no_checkin_row(db_with_users):
+    """A user who never logged anything yesterday (no checkin row at all)
+    should still get auto-penance for every penance-able task — they missed
+    everything, not just the columns that happen to be 0 in an existing row."""
+    db = db_with_users
+    # Bryan has NO daily_checkins row for day 17. Sweep 2 must drive from
+    # active_users (not from the checkins table).
+    from bot.jobs.scheduler import midnight_cutoff_job
+    bot = _StubBot()
+    await midnight_cutoff_job(_make_context(db, bot))
+
+    bryan_pens = await db.get_penances_for_missed_day(111, 17)
+    tasks = sorted(dict(r)["task"] for r in bryan_pens)
+    assert "workout_indoor" in tasks
+    assert "workout_outdoor" in tasks
+    assert "water" in tasks
+    assert "reading" in tasks
+    assert "photo" in tasks
+    assert "diet" not in tasks  # binary, never auto-penance'd
 
 
 @pytest.mark.asyncio
