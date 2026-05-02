@@ -271,7 +271,7 @@ def main() -> None:
 
             result = await chat_with_luke(message, db, user_id, context=context)
 
-            # Handle media requests (transformation/timelapse)
+            # Handle media requests (transformation/timelapse/compliance_grid)
             if result.get("media") == "transformation":
                 from bot.handlers.transformation import transformation_command
                 await transformation_command(update, context)
@@ -279,6 +279,10 @@ def main() -> None:
             elif result.get("media") == "timelapse":
                 from bot.handlers.transformation import timelapse_command
                 await timelapse_command(update, context)
+                return
+            elif result.get("media") == "compliance_grid":
+                from bot.handlers.compliance import send_compliance_grid_dm
+                await send_compliance_grid_dm(update, context)
                 return
 
             # Refresh the daily card if a tracker action was taken

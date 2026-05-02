@@ -980,7 +980,53 @@ def get_admin_handlers() -> list:
         CommandHandler("admin_eliminate", admin_eliminate_command),
         CommandHandler("admin_test_transform", admin_test_transform_command),
         CommandHandler("admin_conversations", admin_conversations_command),
+        CommandHandler("admin_compliance_grid", _admin_compliance_grid_command),
+        CommandHandler("admin_open_retro_audit", _admin_open_retro_audit_command),
+        CommandHandler("admin_close_retro_audit", _admin_close_retro_audit_command),
     ]
+
+
+async def _admin_compliance_grid_command(update, context):
+    from bot.handlers.compliance import admin_compliance_grid_command
+    await admin_compliance_grid_command(update, context)
+
+
+async def _admin_open_retro_audit_command(update, context):
+    """Open the retroactive-edit grace window. Usage: /admin_open_retro_audit [days=14]
+
+    During the window, users can backfill / declare penance for any past day.
+    After the window, only yesterday is editable.
+    """
+    if not _is_admin(update.effective_user.id):
+        await _admin_reply(update, context, "Admin only.")
+        return
+    db = context.bot_data["db"]
+    from bot.utils.progress import get_current_challenge_day
+    today = await get_current_challenge_day(db)
+    days = 14
+    if context.args:
+        try:
+            days = int(context.args[0])
+        except ValueError:
+            await _admin_reply(update, context, "Usage: /admin_open_retro_audit [days]")
+            return
+    until_day = today + days
+    await db.set_setting("retro_grace_until_day", str(until_day))
+    await _admin_reply(
+        update, context,
+        f"Retro-edit grace window OPEN until day {until_day} (today is {today}, {days} days from now).\n"
+        f"Users can backfill / declare penance for any past day until then.",
+    )
+
+
+async def _admin_close_retro_audit_command(update, context):
+    """Close the retroactive-edit grace window early."""
+    if not _is_admin(update.effective_user.id):
+        await _admin_reply(update, context, "Admin only.")
+        return
+    db = context.bot_data["db"]
+    await db.set_setting("retro_grace_until_day", "0")
+    await _admin_reply(update, context, "Retro-edit grace window CLOSED. Only yesterday is editable now.")
 
 
 def get_fail_handler() -> ConversationHandler:

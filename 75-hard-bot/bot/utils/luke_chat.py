@@ -348,6 +348,16 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
+        "name": "get_my_compliance_grid",
+        "description": (
+            "Render the user's compliance grid — all 75 days × 6 tasks colored by state "
+            "(complete / unmarked / in-penance / recovered / failed / arbitration / future). "
+            "Use when the user asks to see their progress overview, history, where they missed days, "
+            "or 'show me my grid'. Returns a PNG image of the full challenge."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "get_timelapse",
         "description": "Generate an animated video timelapse of all the user's progress photos. Use when user asks for a timelapse, slideshow, animation of their photos, etc.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
@@ -954,8 +964,11 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
         # Lock fires at 00:00 PT of the day after that — i.e., once
         # (pt_today - target_anchor_pt_date) > 1, the window is closed.
         # Day 1 has a grace window — always allowed regardless of clock.
+        # Retro grace: if Bryan opened /admin_open_retro_audit, the window is
+        # wide open (any past day) until the configured day passes.
         is_day_1_grace = target_day == 1
-        if not is_day_1_grace:
+        retro_active = await db.is_retro_grace_active(day)
+        if not is_day_1_grace and not retro_active:
             if target_day < yesterday:
                 return f"DENIED: Day {target_day} is more than 1 day old — backfill window for that day is permanently closed. Ask the organizer for grace."
 
@@ -1012,6 +1025,15 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
         else:
             return f"Unknown task type: {task}"
 
+        # Audit trail for retroactive edits — anything older than yesterday
+        # is by definition retro and worth flagging in event_log so audits
+        # can see how often history is being rewritten.
+        if target_day < yesterday and target_day != 1:
+            await db.log_event(
+                user_id, None, "retroactive_edit",
+                f"tool=backfill_task task={task} target_day={target_day} card_day={day}",
+            )
+
         return result_msg
 
     elif tool_name == "declare_penance":
@@ -1036,6 +1058,17 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
             return "DENIED: There's no Day 0 or earlier."
         if missed_day >= day:
             return f"DENIED: Day {missed_day} hasn't been missed yet — that's today or later."
+
+        # Outside the retro grace window, only yesterday is penance-able.
+        # Older days require Bryan to open /admin_open_retro_audit first.
+        yesterday = day - 1
+        if missed_day < yesterday:
+            retro_active = await db.is_retro_grace_active(day)
+            if not retro_active:
+                return (
+                    f"DENIED: Day {missed_day} is more than 1 day old. The retro-audit window "
+                    "isn't open right now — ask the organizer to open it if you need to fix history."
+                )
 
         # Don't double-declare: one in_progress / recovered penance per (user, missed_day, task).
         existing = await db.get_penances_for_missed_day(user_id, missed_day)
@@ -1137,6 +1170,9 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
         if len(photos) < 2:
             return "NOT_ENOUGH_PHOTOS: User needs at least 2 days of photos for a transformation."
         return "MEDIA:transformation"
+
+    elif tool_name == "get_my_compliance_grid":
+        return "MEDIA:compliance_grid"
 
     elif tool_name == "get_timelapse":
         photos = await db.get_photo_file_ids(user_id)

@@ -391,6 +391,22 @@ class Database:
             return "cardi"
         return row["tone"]
 
+    async def is_retro_grace_active(self, today_day: int) -> bool:
+        """True if the retroactive-edit grace window is currently open.
+
+        Bryan opens the window via /admin_open_retro_audit at deploy time.
+        While open, backfill_task and declare_penance accept any past day
+        (not just yesterday). After the window closes, normal rules apply.
+        """
+        raw = await self.get_setting("retro_grace_until_day")
+        if not raw:
+            return False
+        try:
+            until = int(raw)
+        except (TypeError, ValueError):
+            return False
+        return today_day <= until
+
     async def set_payment_confirmed(self, telegram_id: int, day: int) -> None:
         """Admin marks Venmo/Zelle payment received for self-fail buy-in."""
         await self._conn.execute(
