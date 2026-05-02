@@ -986,6 +986,7 @@ def get_admin_handlers() -> list:
         CommandHandler("admin_settle_failure", _admin_settle_failure_command),
         CommandHandler("admin_arbitrations", _admin_arbitrations_command),
         CommandHandler("admin_arbitrate", _admin_arbitrate_command),
+        CommandHandler("admin_reset_tone", _admin_reset_tone_command),
     ]
 
 
@@ -1254,6 +1255,29 @@ def get_fail_handler() -> ConversationHandler:
         },
         fallbacks=[CommandHandler("cancel", fail_cancel)],
     )
+
+
+async def _admin_reset_tone_command(update, context):
+    """Reset a user's custom tone back to default. Kill-switch for tone abuse.
+
+    Usage: /admin_reset_tone <name>
+    """
+    if not _is_admin(update.effective_user.id):
+        await _admin_reply(update, context, "Admin only.")
+        return
+    if not context.args:
+        await _admin_reply(update, context, "Usage: /admin_reset_tone <name>")
+        return
+    name = " ".join(context.args)
+    db = context.bot_data["db"]
+    user = await db.get_user_by_name(name)
+    if not user:
+        await _admin_reply(update, context, f"No user named '{name}' found.")
+        return
+    user = dict(user)
+    await db.set_user_tone(user["telegram_id"], None)
+    await db.log_event(user["telegram_id"], None, "tone_admin_reset", "")
+    await _admin_reply(update, context, f"Reset {name}'s tone to default (cardi).")
 
 
 def get_redeem_handler() -> ConversationHandler:
