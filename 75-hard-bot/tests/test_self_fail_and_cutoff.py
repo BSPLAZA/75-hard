@@ -197,13 +197,14 @@ async def test_cutoff_sends_payment_dm_on_penance_fail(db_with_users):
 
 
 @pytest.mark.asyncio
-async def test_cutoff_auto_creates_penance_for_missed_action_task(db_with_users):
-    """A penance-able task missed yesterday with no penance row → auto-created."""
+async def test_cutoff_does_NOT_auto_create_penance_for_incomplete_tasks(db_with_users):
+    """v55: midnight cutoff no longer auto-creates penance rows for incomplete
+    tasks. Bryan's design — incomplete at midnight could be 'didn't do' OR
+    'forgot to log', and the morning nudge at 9am ET disambiguates per task.
+    Pre-empting that with auto-create treats both cases identically."""
     db = db_with_users
-    # Bryan has a day-17 checkin showing missed indoor workout (and others)
-    await db.create_checkin(111, 17, "2026-05-01")
-    # leave workout_1_done = 0 (default)
-    # Kat completed everything for day 17 — should NOT get a penance row
+    # Bryan: missed several tasks. Kat: missed nothing.
+    await db.create_checkin(111, 17, "2026-05-01")  # all 0 by default
     await db.create_checkin(222, 17, "2026-05-01")
     await db._conn.execute(
         """UPDATE daily_checkins
@@ -218,67 +219,47 @@ async def test_cutoff_auto_creates_penance_for_missed_action_task(db_with_users)
     bot = _StubBot()
     await midnight_cutoff_job(_make_context(db, bot))
 
+    # Bryan should have NO new penance rows from the cutoff. Morning nudge
+    # will ask him per task at 9am ET.
     bryan_pens = await db.get_penances_for_missed_day(111, 17)
-    tasks = sorted(dict(r)["task"] for r in bryan_pens)
-    # All penance-able tasks Bryan missed should now have penance rows
-    assert "workout_indoor" in tasks
-    assert "workout_outdoor" in tasks
-    assert "water" in tasks
-    assert "reading" in tasks
-    assert "photo" in tasks
-    # Diet is NOT penance-able (binary)
-    assert "diet" not in tasks
-    # makeup_day must be the new day (yesterday + 1 = 18), so the user can
-    # actually do 2× during the new day's window.
-    for r in bryan_pens:
-        assert dict(r)["makeup_day"] == 18, f"unexpected makeup_day {dict(r)['makeup_day']}"
-
-    kat_pens = await db.get_penances_for_missed_day(222, 17)
-    assert len(kat_pens) == 0  # nothing missed → nothing auto-created
-
-
-@pytest.mark.asyncio
-async def test_cutoff_does_not_auto_create_for_diet(db_with_users):
-    """Diet is binary — never auto-create penance for a diet miss."""
-    db = db_with_users
-    await db.create_checkin(111, 17, "2026-05-01")
-    await db._conn.execute(
-        """UPDATE daily_checkins
-           SET workout_1_done=1, workout_2_done=1, water_cups=16,
-               diet_done=0, reading_done=1, photo_done=1
-           WHERE telegram_id=? AND day_number=?""",
-        (111, 17),
+    assert len(bryan_pens) == 0, (
+        f"cutoff must not auto-create penance — got {[dict(r) for r in bryan_pens]}"
     )
-    await db._conn.commit()
-
-    from bot.jobs.scheduler import midnight_cutoff_job
-    bot = _StubBot()
-    await midnight_cutoff_job(_make_context(db, bot))
-
-    pens = await db.get_penances_for_missed_day(111, 17)
-    assert len(pens) == 0
+    kat_pens = await db.get_penances_for_missed_day(222, 17)
+    assert len(kat_pens) == 0
 
 
 @pytest.mark.asyncio
-async def test_cutoff_auto_creates_penance_for_user_with_no_checkin_row(db_with_users):
-    """A user who never logged anything yesterday (no checkin row at all)
-    should still get auto-penance for every penance-able task — they missed
-    everything, not just the columns that happen to be 0 in an existing row."""
+async def test_cutoff_does_not_auto_create_for_user_with_no_checkin_row(db_with_users):
+    """A user who never logged anything yesterday must NOT get auto-penance.
+    The morning nudge handles the 'did/missed?' disambiguation."""
     db = db_with_users
-    # Bryan has NO daily_checkins row for day 17. Sweep 2 must drive from
-    # active_users (not from the checkins table).
+    # Bryan has NO daily_checkins row for day 17.
     from bot.jobs.scheduler import midnight_cutoff_job
     bot = _StubBot()
     await midnight_cutoff_job(_make_context(db, bot))
 
     bryan_pens = await db.get_penances_for_missed_day(111, 17)
-    tasks = sorted(dict(r)["task"] for r in bryan_pens)
-    assert "workout_indoor" in tasks
-    assert "workout_outdoor" in tasks
-    assert "water" in tasks
-    assert "reading" in tasks
-    assert "photo" in tasks
-    assert "diet" not in tasks  # binary, never auto-penance'd
+    assert len(bryan_pens) == 0
+
+
+@pytest.mark.asyncio
+async def test_cutoff_admin_warning_mentions_morning_nudge(db_with_users):
+    """Admin DM at midnight should point at the 9am ET morning nudge as the
+    disambiguation path, NOT claim penance was already auto-created."""
+    db = db_with_users
+    await db.create_checkin(111, 17, "2026-05-01")  # incomplete
+    from bot.jobs.scheduler import midnight_cutoff_job
+    bot = _StubBot()
+    await midnight_cutoff_job(_make_context(db, bot))
+    # Admin should have received a warning — find it
+    admin_msgs = [m for m in bot.sent if m["chat_id"] == 999]
+    assert admin_msgs, "expected admin warning DM"
+    text = admin_msgs[0]["text"].lower()
+    # Old phrasing must be gone
+    assert "auto-created" not in text
+    # New phrasing pointing to morning nudge
+    assert "morning" in text or "9am" in text or "nudge" in text
 
 
 @pytest.mark.asyncio

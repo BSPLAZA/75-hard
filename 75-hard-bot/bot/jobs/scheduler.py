@@ -536,7 +536,7 @@ async def cutoff_warning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def midnight_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """12 AM PT (midnight) -- Lock previous day, sweep penance state, alert admin.
+    """12 AM PT (midnight) -- Lock previous day, resolve open penances, alert admin.
 
     Schedule moved from noon PT to midnight PT in v51 — group asked for the
     latest possible cutoff that still preserves the day-boundary semantic.
@@ -547,15 +547,19 @@ async def midnight_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
          Check the user's checkin column for that task — recovery rule per
          task in bot.penance.is_target_met (water counter; booleans = column
          bool). Update status to 'recovered' or 'failed'.
-      2. Auto-create penance for unresolved misses. Walk yesterday's
-         incomplete checkins. For each penance-able task that wasn't done,
-         and where no penance row exists yet, create one with
-         makeup_day=today (= day). User gets a DM telling them what they
-         owe today.
-      3. For any user whose penance just failed in step 1 (or who has
-         binary diet violations not in arbitration), DM them the self-fail
-         payment surface and warn admin. The DM gives Venmo + Zelle so they
-         can pay the residual buy-in to the prize pool.
+      2. For any user whose penance just failed in step 1, DM them the
+         self-fail payment surface. DM gives Venmo + Zelle so they can pay
+         the residual buy-in to the prize pool.
+      3. Admin warning for incomplete users.
+
+    NOTE: this job does NOT auto-create penance for users who simply have
+    incomplete tasks. Bryan's design: an incomplete task at midnight could
+    be (a) not-done OR (b) done-but-not-logged. Auto-creating penance treats
+    both the same and pre-empts the user's chance to disambiguate. The 9am
+    ET morning_after_reminder_job is the right place: it DMs each user the
+    list of unmarked tasks and asks per task "did you do it (and forgot to
+    log) or miss it (need penance)?" The user's reply routes to backfill_task
+    or declare_penance via chat_with_luke.
 
     NOTE on day reference: at 00:00 PT we're at 03:00 ET, which is past the
     ET calendar rollover but BEFORE the next 7am ET morning card posts.
@@ -563,14 +567,12 @@ async def midnight_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     day's card writes 4 hours from now). So:
       - `get_current_challenge_day(db)` returns the just-ended day → that's
         the day we lock here. Bind it to `yesterday`.
-      - `day` = yesterday + 1 is the new day starting at this midnight and
-        will get its card posted in 4 hours. New penances created here use
-        makeup_day=day so the makeup window aligns with the new active day.
+      - `day` = yesterday + 1 is the new day starting at this midnight.
     """
     from bot.config import (
         BUY_IN, PRIZE_POOL_VENMO_USERNAME, PRIZE_POOL_ZELLE_PHONE,
     )
-    from bot.penance import PENANCE_ABLE_TASKS, TASK_TARGETS, is_target_met
+    from bot.penance import is_target_met
     from bot.utils.progress import get_current_challenge_day
 
     db = context.bot_data["db"]
@@ -611,39 +613,17 @@ async def midnight_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                     f"task={r['task']} missed_day={r['missed_day']}",
                 )
 
-    # Sweep 2: auto-create penances for unresolved yesterday misses.
-    # Drive from active_users (not just users who have a checkin row) — if a
-    # user never logged anything yesterday, get_all_checkins_for_day returns
-    # nothing for them and they'd silently skip the auto-penance sweep. Treat
-    # missing checkin as all tasks missed.
-    for u in active_users:
-        u = dict(u)
-        c_row = await db.get_checkin(u["telegram_id"], yesterday)
-        c = dict(c_row) if c_row else {}
-        if c and is_all_complete(c):
-            continue
-        for task in PENANCE_ABLE_TASKS:
-            column, _ = TASK_TARGETS[task]
-            if c.get(column):
-                continue  # task was actually done
-            existing = await db.get_penances_for_missed_day(u["telegram_id"], yesterday)
-            if any(dict(r)["task"] == task for r in existing):
-                continue  # already declared (in_progress, recovered, or failed)
-            await db.add_penance(
-                telegram_id=u["telegram_id"],
-                missed_day=yesterday,
-                makeup_day=day,
-                task=task,
-            )
-            await db.log_event(
-                u["telegram_id"], None, "penance_auto_created",
-                f"task={task} missed_day={yesterday}",
-            )
+    # NOTE: there used to be a "sweep 2" here that auto-created penance rows
+    # for every incomplete penance-able task. That treated "missed it" and
+    # "did it forgot to log" identically, pre-empting the morning nudge's
+    # disambiguation. Removed Sat May 2 after Bryan flagged it on the first
+    # midnight after deploy. Penance creation now happens via user reply to
+    # the 9am ET morning_after_reminder DM, routed through declare_penance.
 
-    # Refresh checkins list for sweep 4 (admin warning).
+    # Pull checkins for sweep 3's admin warning.
     checkins = await db.get_all_checkins_for_day(yesterday)
 
-    # Sweep 3: notify users with failed penances + admin warning for binary misses.
+    # Sweep 2: DM users whose penance failed (resolved → 'failed' in sweep 1).
     venmo = PRIZE_POOL_VENMO_USERNAME
     zelle = PRIZE_POOL_ZELLE_PHONE
     for uid in failed_users:
@@ -668,7 +648,8 @@ async def midnight_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception as e:
             logger.warning("self-fail DM failed for uid=%s: %s", uid, e)
 
-    # Sweep 4: admin warning for incomplete users (kept from prior behavior).
+    # Sweep 3: admin warning for incomplete users. Morning nudge will follow
+    # up with each affected user at 9am ET to disambiguate did/missed/penance.
     for c in checkins:
         if not is_all_complete(c):
             missing = get_missing_tasks(c)
@@ -679,8 +660,8 @@ async def midnight_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                     chat_id=ADMIN_USER_ID,
                     text=(
                         f"midnight cutoff: {name} incomplete day {yesterday} "
-                        f"({', '.join(missing)}). penance auto-created where applicable. "
-                        f"binary diet violations need /admin_arbitrate (when wired)."
+                        f"({', '.join(missing)}). morning nudge at 9am ET will "
+                        f"ask them per task: did/missed/needs penance."
                     ),
                 )
             except Exception:

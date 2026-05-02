@@ -56,6 +56,15 @@ RELEASES: list[dict] = [
             "• custom voice. dm 'talk to me like X' if cardi ain't your vibe."
         ),
     },
+    {
+        "version": 55,
+        "user_facing": (
+            "fix: midnight cutoff was creating penance for everyone whether you missed it or "
+            "just forgot to log. that ain't right. now i wait for the 9am ET nudge to ask you "
+            "first — did you do it, or miss it? you tell me, i log it accordingly. tonight's "
+            "phantom penances rolled back."
+        ),
+    },
 ]
 
 CURRENT_VERSION: int = max(r["version"] for r in RELEASES)
