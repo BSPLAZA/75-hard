@@ -97,19 +97,40 @@ async def post_shutdown(application: Application) -> None:
 
 
 async def handle_new_group(update: Update, context) -> None:
-    """Detect when the bot is added to a group and send welcome messages."""
+    """Detect when the bot is added to a group and send welcome messages.
+
+    Idempotent per chat_id. Telegram fires my_chat_member updates on multiple
+    transitions: initial-add, role promotion, supergroup migration, etc. We
+    only want to welcome ONCE per chat. Stores a 'welcomed_chat:<chat_id>'
+    flag in bot_settings and short-circuits on subsequent events for the
+    same chat. This was the root cause of Bryan seeing intro commands twice
+    when the group migrated to a supergroup.
+    """
     if update.my_chat_member:
         new_status = update.my_chat_member.new_chat_member.status
         if new_status in ("member", "administrator"):
             chat_id = update.my_chat_member.chat.id
+            db = context.bot_data["db"]
+
+            # Idempotency check — skip if we've already welcomed this chat_id.
+            # Still update bot_data so subsequent sends target the right chat.
+            welcomed_key = f"welcomed_chat:{chat_id}"
+            already_welcomed = await db.get_setting(welcomed_key)
             context.bot_data["group_chat_id"] = chat_id
+            if already_welcomed:
+                logger.info(
+                    "handle_new_group: chat_id=%d already welcomed (status=%s); "
+                    "skipping welcome/FAQ/invite to stay idempotent.",
+                    chat_id, new_status,
+                )
+                return
+
             logger.info(
                 "Bot added to group: %s (chat_id: %d)",
                 update.my_chat_member.chat.title,
                 chat_id,
             )
 
-            db = context.bot_data["db"]
             unregistered = await db.get_unregistered_names()
             all_users = await db.get_all_users()
             bot_info = await context.bot.get_me()
@@ -144,9 +165,15 @@ async def handle_new_group(update: Update, context) -> None:
                     name="75 Hard — Locked In",
                 )
                 context.bot_data["group_invite_link"] = invite.invite_link
+                await db.set_setting("group_invite_link", invite.invite_link)
                 logger.info("Invite link generated: %s", invite.invite_link)
             except Exception as e:
                 logger.warning("Could not create invite link: %s", e)
+
+            # Mark this chat as welcomed so the next my_chat_member event
+            # (e.g., supergroup migration, role promotion) skips re-welcoming.
+            await db.set_setting(welcomed_key, "1")
+            await db.set_setting("group_chat_id", str(chat_id))
 
 
 def _setup_phoenix_tracing() -> None:
