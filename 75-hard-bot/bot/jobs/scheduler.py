@@ -514,10 +514,26 @@ async def cutoff_warning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def midnight_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """12 AM PT (midnight) -- Lock previous day, flag incomplete users to admin.
+    """12 AM PT (midnight) -- Lock previous day, sweep penance state, alert admin.
 
     Schedule moved from noon PT to midnight PT in v51 — group asked for the
     latest possible cutoff that still preserves the day-boundary semantic.
+
+    Three sweeps (in order):
+      1. Resolve makeup-day penances. Walk every penance_log row where
+         makeup_day == yesterday (= day - 1, the day that just locked).
+         Check the user's checkin column for that task — recovery rule per
+         task in bot.penance.is_target_met (water counter; booleans = column
+         bool). Update status to 'recovered' or 'failed'.
+      2. Auto-create penance for unresolved misses. Walk yesterday's
+         incomplete checkins. For each penance-able task that wasn't done,
+         and where no penance row exists yet, create one with
+         makeup_day=today (= day). User gets a DM telling them what they
+         owe today.
+      3. For any user whose penance just failed in step 1 (or who has
+         binary diet violations not in arbitration), DM them the self-fail
+         payment surface and warn admin. The DM gives Venmo + Zelle so they
+         can pay the residual buy-in to the prize pool.
 
     NOTE on day reference: at 00:00 PT we're at 03:00 ET, which is past the
     ET calendar rollover but BEFORE the 7am ET morning card posts. So
@@ -525,25 +541,115 @@ async def midnight_cutoff_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     while `get_current_challenge_day(db)` reads from `daily_cards` and
     correctly returns the still-active card day. Use the DB-anchored helper.
     """
-    db = context.bot_data["db"]
+    from bot.config import (
+        BUY_IN, PRIZE_POOL_VENMO_USERNAME, PRIZE_POOL_ZELLE_PHONE,
+    )
+    from bot.penance import PENANCE_ABLE_TASKS, TASK_TARGETS, is_target_met
     from bot.utils.progress import get_current_challenge_day
+
+    db = context.bot_data["db"]
     day = await get_current_challenge_day(db)
     yesterday = day - 1
     if yesterday < 1:
         return
 
+    failed_users: set[int] = set()  # users whose penance just failed → self-fail prompt
+
+    # Sweep 1: resolve penances whose makeup_day was yesterday.
+    # Walk every active user; cheap (5 users × ~few penances each).
+    active_users = await db.get_active_users()
+    for u in active_users:
+        u = dict(u)
+        rows = await db.get_penances_for_makeup_day(u["telegram_id"], yesterday)
+        if not rows:
+            continue
+        checkin = await db.get_checkin(u["telegram_id"], yesterday)
+        checkin = dict(checkin) if checkin else None
+        for r in rows:
+            r = dict(r)
+            # Recovery rule: target met on the makeup day.
+            # is_target_met checks the doubled target for water, single for booleans.
+            # For booleans we honor-system the 2× claim — schema can't distinguish
+            # "1 indoor today" from "2 indoor today", so any completed cell counts.
+            if checkin and is_target_met(checkin, r["task"], in_penance=(r["task"] == "water")):
+                await db.resolve_penance(r["id"], "recovered")
+                await db.log_event(
+                    u["telegram_id"], None, "penance_recovered",
+                    f"task={r['task']} missed_day={r['missed_day']}",
+                )
+            else:
+                await db.resolve_penance(r["id"], "failed")
+                failed_users.add(u["telegram_id"])
+                await db.log_event(
+                    u["telegram_id"], None, "penance_failed",
+                    f"task={r['task']} missed_day={r['missed_day']}",
+                )
+
+    # Sweep 2: auto-create penances for unresolved yesterday misses.
+    # If user got the morning nudge and never replied, the penance-able tasks
+    # default to penance (not auto-fail) per design Q2. Binary diet violations
+    # stay in admin-warn state since they need arbitration, not penance.
     checkins = await db.get_all_checkins_for_day(yesterday)
+    for c in checkins:
+        c = dict(c)
+        if is_all_complete(c):
+            continue
+        for task in PENANCE_ABLE_TASKS:
+            column, _ = TASK_TARGETS[task]
+            if c.get(column):
+                continue  # task was actually done
+            existing = await db.get_penances_for_missed_day(c["telegram_id"], yesterday)
+            if any(dict(r)["task"] == task for r in existing):
+                continue  # already declared (in_progress, recovered, or failed)
+            await db.add_penance(
+                telegram_id=c["telegram_id"],
+                missed_day=yesterday,
+                makeup_day=day,
+                task=task,
+            )
+            await db.log_event(
+                c["telegram_id"], None, "penance_auto_created",
+                f"task={task} missed_day={yesterday}",
+            )
+
+    # Sweep 3: notify users with failed penances + admin warning for binary misses.
+    venmo = PRIZE_POOL_VENMO_USERNAME
+    zelle = PRIZE_POOL_ZELLE_PHONE
+    for uid in failed_users:
+        user = await db.get_user(uid)
+        if not user or not dict(user)["dm_registered"]:
+            continue
+        remaining = max(0, 75 - day)
+        owed = max(0, BUY_IN - day)  # what's left of the original buy-in
+        venmo_line = f"venmo: @{venmo}" if venmo else None
+        zelle_line = f"zelle: {zelle}" if zelle else None
+        pay_lines = [l for l in (venmo_line, zelle_line) if l]
+        pay_block = "\n".join(pay_lines) if pay_lines else "ask the organizer for payment details."
+        text = (
+            f"yo, your penance didn't land yesterday. that's a fail.\n\n"
+            f"${owed} to the prize pool ({remaining} days you didn't finish).\n"
+            f"{pay_block}\n\n"
+            f"reply 'paid' when sent. /redeem if you want a way back in."
+        )
+        try:
+            await context.bot.send_message(chat_id=uid, text=text)
+            await db.log_event(uid, None, "self_fail_payment_dm_sent", f"day={day}")
+        except Exception as e:
+            logger.warning("self-fail DM failed for uid=%s: %s", uid, e)
+
+    # Sweep 4: admin warning for incomplete users (kept from prior behavior).
     for c in checkins:
         if not is_all_complete(c):
             missing = get_missing_tasks(c)
             user = await db.get_user(c["telegram_id"])
-            name = user["name"] if user else "?"
+            name = dict(user)["name"] if user else "?"
             try:
                 await context.bot.send_message(
                     chat_id=ADMIN_USER_ID,
                     text=(
-                        f"WARNING: {name} has incomplete tasks for Day {yesterday}: "
-                        f"{', '.join(missing)}. Use /admin_eliminate if needed."
+                        f"midnight cutoff: {name} incomplete day {yesterday} "
+                        f"({', '.join(missing)}). penance auto-created where applicable. "
+                        f"binary diet violations need /admin_arbitrate (when wired)."
                     ),
                 )
             except Exception:

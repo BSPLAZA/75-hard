@@ -983,7 +983,70 @@ def get_admin_handlers() -> list:
         CommandHandler("admin_compliance_grid", _admin_compliance_grid_command),
         CommandHandler("admin_open_retro_audit", _admin_open_retro_audit_command),
         CommandHandler("admin_close_retro_audit", _admin_close_retro_audit_command),
+        CommandHandler("admin_settle_failure", _admin_settle_failure_command),
     ]
+
+
+async def _admin_settle_failure_command(update, context):
+    """Confirm a self-failed user's residual payment received → finalize
+    elimination + post group acknowledgement. Distinct from
+    /admin_confirm_payment (that one is for onboarding buy-ins).
+
+    Usage: /admin_settle_failure <name>
+    """
+    if not _is_admin(update.effective_user.id):
+        await _admin_reply(update, context, "Admin only.")
+        return
+    if not context.args:
+        await _admin_reply(update, context, "Usage: /admin_settle_failure <name>")
+        return
+
+    name = " ".join(context.args)
+    db = context.bot_data["db"]
+    user = await db.get_user_by_name(name)
+    if not user:
+        await _admin_reply(update, context, f"No user named '{name}' found.")
+        return
+    user = dict(user)
+
+    today = today_et()
+    day_number = get_day_number(CHALLENGE_START_DATE, today)
+    days_completed = max(0, day_number - 1)
+
+    # Finalize elimination if not already done.
+    if user.get("active"):
+        await db.eliminate_user(user["telegram_id"], failed_day=day_number)
+    await db.set_payment_confirmed(user["telegram_id"], day=day_number)
+    await db.log_event(
+        user["telegram_id"], None, "self_fail_settled", f"day={day_number}",
+    )
+
+    # Group acknowledgement — Cardi voice.
+    group_chat_id = context.bot_data.get("group_chat_id")
+    if group_chat_id:
+        active_users = await db.get_active_users()
+        active_count = len(active_users)
+        prize_pool = active_count * 75
+        try:
+            await context.bot.send_message(
+                chat_id=group_chat_id,
+                text=(
+                    f"{name} paid up and stepped out — {days_completed} days done, "
+                    f"residual went to the pool. respect.\n\n"
+                    f"{active_count} still in. pool now ${prize_pool}."
+                ),
+            )
+        except Exception:
+            pass
+        try:
+            await refresh_card(context, day_number)
+        except Exception:
+            pass
+
+    await _admin_reply(
+        update, context,
+        f"Settled failure for {name}. Eliminated, payment confirmed, group notified.",
+    )
 
 
 async def _admin_compliance_grid_command(update, context):

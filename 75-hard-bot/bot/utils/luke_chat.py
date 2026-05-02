@@ -348,6 +348,27 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
+        "name": "declare_self_fail",
+        "description": (
+            "User explicitly says they failed and are out — they're choosing to be eliminated. "
+            "DM template surfaces Venmo + Zelle for the residual buy-in payment to the prize pool. "
+            "Does NOT eliminate the user immediately — admin /admin_settle_failure confirms payment "
+            "received, then full elimination + group announcement fires. "
+            "Triggers: 'I failed yesterday I'm out', 'I'm done, eliminate me', 'I want to fail'. "
+            "DO NOT call this for soft cases (one missed task that could be penance'd) — that's "
+            "declare_penance. Only call when user is unambiguously declaring final exit."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Optional one-line reason from the user (saved for the audit trail).",
+                },
+            },
+        },
+    },
+    {
         "name": "get_my_compliance_grid",
         "description": (
             "Render the user's compliance grid — all 75 days × 6 tasks colored by state "
@@ -1170,6 +1191,35 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
         if len(photos) < 2:
             return "NOT_ENOUGH_PHOTOS: User needs at least 2 days of photos for a transformation."
         return "MEDIA:transformation"
+
+    elif tool_name == "declare_self_fail":
+        from bot.config import (
+            BUY_IN, PRIZE_POOL_VENMO_USERNAME, PRIZE_POOL_ZELLE_PHONE,
+        )
+        reason = (tool_input.get("reason") or "").strip()[:200]
+        await db.log_event(
+            user_id, None, "self_fail_declared",
+            f"day={day} reason={reason}" if reason else f"day={day}",
+        )
+        owed = max(0, BUY_IN - day)
+        remaining_days = max(0, 75 - day)
+        venmo_line = f"venmo: @{PRIZE_POOL_VENMO_USERNAME}" if PRIZE_POOL_VENMO_USERNAME else None
+        zelle_line = f"zelle: {PRIZE_POOL_ZELLE_PHONE}" if PRIZE_POOL_ZELLE_PHONE else None
+        pay_lines = [l for l in (venmo_line, zelle_line) if l]
+        if pay_lines:
+            pay_block = "\n".join(pay_lines)
+            return (
+                f"got it. you're declaring fail on day {day}.\n\n"
+                f"the residual is ${owed} ({remaining_days} days you didn't finish, into the prize pool).\n"
+                f"{pay_block}\n\n"
+                f"reply 'paid' when sent. admin will confirm and post in the group. "
+                f"if you change your mind before payment lands, /redeem is still on the table later."
+            )
+        return (
+            f"got it. you're declaring fail on day {day}. "
+            f"residual is ${owed} ({remaining_days} days × $1 to the prize pool). "
+            f"DM the organizer to settle. /redeem available later."
+        )
 
     elif tool_name == "get_my_compliance_grid":
         return "MEDIA:compliance_grid"
