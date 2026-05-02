@@ -351,12 +351,19 @@ def main() -> None:
 
         bot_username = (context.bot.username or "").lower()
         text = msg.text
-        # Trigger: @-mention OR reply to a bot message
+        # Trigger: @-mention OR reply to a bot text message. Reply-to-bot is
+        # gated on the replied-to message having NO inline keyboard, because
+        # the daily card is a bot message with buttons that users frequently
+        # reply to (workout questions, water debate) — those replies should
+        # NOT be intercepted as AI chat. Cards have reply_markup; plain bot
+        # messages don't.
         is_mention = bool(bot_username) and f"@{bot_username}" in text.lower()
+        replied = msg.reply_to_message
         is_reply_to_bot = (
-            msg.reply_to_message is not None
-            and msg.reply_to_message.from_user is not None
-            and msg.reply_to_message.from_user.id == context.bot.id
+            replied is not None
+            and replied.from_user is not None
+            and replied.from_user.id == context.bot.id
+            and getattr(replied, "reply_markup", None) is None
         )
         if not (is_mention or is_reply_to_bot):
             return
@@ -379,7 +386,9 @@ def main() -> None:
             return  # only registered participants get LLM time
 
         try:
-            result = await chat_with_luke(clean, db, user_id, context=context)
+            result = await chat_with_luke(
+                clean, db, user_id, context=context, source="group",
+            )
         except Exception as e:
             logger.warning("group_mention_handler chat failed user=%d: %s", user_id, e)
             return

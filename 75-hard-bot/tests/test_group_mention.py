@@ -101,3 +101,26 @@ def test_handler_caps_message_length():
     handler_src = rest[:end_idx] if end_idx > 0 else rest
     # Cost protection cap consistent with DM path
     assert "2000" in handler_src
+
+
+def test_handler_passes_source_group_to_chat_with_luke():
+    """Group exchanges must log as source='group' so they don't pollute the
+    user's DM history (which feeds back into session context next turn)."""
+    src = _main_source()
+    start = src.index("async def group_mention_handler")
+    rest = src[start:]
+    end_idx = rest.find("async def ", 50)
+    handler_src = rest[:end_idx] if end_idx > 0 else rest
+    assert 'source="group"' in handler_src or "source='group'" in handler_src
+
+
+def test_handler_skips_reply_to_card_with_buttons():
+    """Daily card is a bot message with inline keyboard. Replies to it must
+    NOT trigger AI chat — that's a UX trap."""
+    src = _main_source()
+    start = src.index("async def group_mention_handler")
+    rest = src[start:]
+    end_idx = rest.find("async def ", 50)
+    handler_src = rest[:end_idx] if end_idx > 0 else rest
+    # Looking for the reply_markup guard
+    assert "reply_markup" in handler_src

@@ -1659,12 +1659,20 @@ async def _ensure_history_loaded(user_id: int, db) -> None:
         return
     _history_loaded.add(user_id)
     try:
-        rows = await db.get_recent_conversations(limit=MAX_HISTORY, telegram_id=user_id)
+        # Pull a wider window than MAX_HISTORY because we'll filter out group
+        # rows + image rows + phantom rows below, and we want the final
+        # chronological slice to actually have content.
+        rows = await db.get_recent_conversations(limit=MAX_HISTORY * 4, telegram_id=user_id)
     except Exception:
         return
     # rows are newest-first; reverse to chronological
     msgs: list[dict] = []
     for r in reversed(list(rows)):
+        # Only DM exchanges seed DM context. Group @-mention turns log as
+        # source='group' and must NOT bleed into the user's DM history.
+        row_source = r["source"] if "source" in r.keys() else "dm"
+        if row_source != "dm":
+            continue
         u_msg = r["user_message"] or ""
         l_msg = r["luke_response"] or ""
         tc = r["tools_called"] if "tools_called" in r.keys() else None
@@ -1702,11 +1710,17 @@ async def chat_with_luke(
     image_b64: str | None = None,
     image_media_type: str = "image/jpeg",
     context=None,
+    source: str = "dm",
 ) -> dict:
     """Have a conversation with Luke. Returns {"text": str, "cover_url": str|None, "media": str|None}.
 
     Maintains per-user conversation history so Luke remembers context.
     If image_b64 is provided, Claude sees the image alongside the text.
+
+    `source` is recorded in conversation_log and controls which exchanges feed
+    back into history hydration. Group @-mentions pass source='group' so they
+    don't pollute the user's DM history (and vice versa). Defaults to 'dm'
+    for the original DM-chat path.
     """
     if not ANTHROPIC_API_KEY:
         return {"text": "AI not configured.", "cover_url": None}
@@ -1918,7 +1932,7 @@ async def chat_with_luke(
         await db.add_conversation_log(
             telegram_id=user_id,
             user_name=user_name,
-            source="dm",
+            source=source,
             user_message=("[image] " + message) if image_b64 else message,
             luke_response=text,
             tools_called=json.dumps(tools_called) if tools_called else None,
@@ -1941,7 +1955,7 @@ async def chat_with_luke(
             await db.add_conversation_log(
                 telegram_id=user_id,
                 user_name=None,
-                source="dm",
+                source=source,
                 user_message=message,
                 luke_response=f"[ERROR] {e}",
                 tools_called=None,

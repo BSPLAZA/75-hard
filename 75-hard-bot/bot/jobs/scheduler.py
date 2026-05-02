@@ -722,12 +722,18 @@ async def spicy_moment_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             total_g = 0
             for e in entries:
                 v = e.get("extracted_value")
-                if e.get("extracted_unit") == "g" and v is not None:
+                # log_food stores extracted_unit='protein_g' (not 'g'). The
+                # earlier 'g' filter was a typo and silently zeroed every
+                # user's total, making the food signal dead.
+                if e.get("extracted_unit") == "protein_g" and v is not None:
                     try:
                         total_g += int(float(v))
                     except (TypeError, ValueError):
                         pass
-            food_lines.append(f"  {c['name']}: {len(entries)} entries, {total_g}g protein")
+            # Don't include entry count — it's a behavioral proxy ("logged 12
+            # things") and not what we want spicy-moment to riff on.
+            if total_g > 0:
+                food_lines.append(f"  {c['name']}: {total_g}g protein logged")
         except Exception:
             pass
     food_summary = "\n".join(food_lines)
