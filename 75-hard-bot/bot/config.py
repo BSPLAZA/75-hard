@@ -36,6 +36,12 @@ ALREADY_PAID = _csv(os.environ.get("ALREADY_PAID", ""))
 # Venmo username for the buy-in deeplink. Empty string disables the deeplink.
 VENMO_USERNAME = os.environ.get("VENMO_USERNAME", "")
 
+# Prize-pool payment endpoints used by the self-fail flow. Both kept out of
+# the public repo. Empty string = the option isn't surfaced. If both are
+# empty, the self-fail flow falls back to "admin will reach out manually".
+PRIZE_POOL_VENMO_USERNAME = os.environ.get("PRIZE_POOL_VENMO_USERNAME", "")
+PRIZE_POOL_ZELLE_PHONE = os.environ.get("PRIZE_POOL_ZELLE_PHONE", "")
+
 # DM same-day reminder fires at 10pm in each user's local TZ.
 # Only users in these env CSVs get the nudge; missing users get nothing.
 USER_TIMEZONES: dict[str, str] = {}

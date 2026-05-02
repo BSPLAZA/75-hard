@@ -128,6 +128,24 @@ class Database:
                 latency_ms INTEGER,
                 error TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS penance_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER NOT NULL,
+                missed_day INTEGER NOT NULL,
+                makeup_day INTEGER NOT NULL,
+                task TEXT NOT NULL,
+                declared_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TEXT,
+                status TEXT NOT NULL DEFAULT 'in_progress',
+                retroactive INTEGER NOT NULL DEFAULT 0,
+                detail TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_penance_user_day
+                ON penance_log(telegram_id, missed_day);
+            CREATE INDEX IF NOT EXISTS idx_penance_status
+                ON penance_log(status);
             """
         )
         await self._conn.commit()
@@ -141,6 +159,8 @@ class Database:
             "ALTER TABLE users ADD COLUMN redemption_fee INTEGER DEFAULT 0",
             "ALTER TABLE users ADD COLUMN start_day INTEGER DEFAULT 1",
             "ALTER TABLE users ADD COLUMN timezone TEXT",
+            "ALTER TABLE users ADD COLUMN tone TEXT DEFAULT 'cardi'",
+            "ALTER TABLE users ADD COLUMN payment_confirmed_day INTEGER",
             "ALTER TABLE books ADD COLUMN cover_url TEXT",
             "CREATE TABLE IF NOT EXISTS bot_settings (key TEXT PRIMARY KEY, value TEXT)",
         ]
@@ -254,6 +274,130 @@ class Database:
             await self._conn.commit()
         except Exception:
             pass
+
+    # ── penance log ───────────────────────────────────────────────────
+
+    async def add_penance(
+        self,
+        telegram_id: int,
+        missed_day: int,
+        makeup_day: int,
+        task: str,
+        *,
+        retroactive: bool = False,
+        detail: str | None = None,
+        status: str = "in_progress",
+    ) -> int:
+        """Create a penance row. Returns the new id.
+
+        missed_day = the day the task was missed.
+        makeup_day = the day the user has to do 2× to recover (usually missed_day+1,
+                     or today for retroactive declarations).
+        status = 'in_progress' (default), 'arbitration_pending' (binary diet violations),
+                 or 'recovered'/'failed' if back-filled by an admin tool.
+        """
+        cur = await self._conn.execute(
+            """
+            INSERT INTO penance_log
+                (telegram_id, missed_day, makeup_day, task, retroactive, detail, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (telegram_id, missed_day, makeup_day, task, 1 if retroactive else 0, detail, status),
+        )
+        await self._conn.commit()
+        return cur.lastrowid
+
+    async def get_penance(self, id: int) -> aiosqlite.Row | None:
+        async with self._conn.execute(
+            "SELECT * FROM penance_log WHERE id = ?", (id,)
+        ) as cur:
+            return await cur.fetchone()
+
+    async def get_active_penances(self, telegram_id: int) -> list[aiosqlite.Row]:
+        """In-progress + arbitration-pending penances for a user, oldest first."""
+        async with self._conn.execute(
+            """
+            SELECT * FROM penance_log
+            WHERE telegram_id = ?
+              AND status IN ('in_progress', 'arbitration_pending')
+            ORDER BY missed_day ASC, id ASC
+            """,
+            (telegram_id,),
+        ) as cur:
+            return await cur.fetchall()
+
+    async def get_penances_for_makeup_day(
+        self, telegram_id: int, makeup_day: int
+    ) -> list[aiosqlite.Row]:
+        """Active penances whose 2× target lands on this day. Used by the
+        daily card UI to show '2× target' badges and by the cutoff sweep
+        to check recovery."""
+        async with self._conn.execute(
+            """
+            SELECT * FROM penance_log
+            WHERE telegram_id = ?
+              AND makeup_day = ?
+              AND status = 'in_progress'
+            ORDER BY id ASC
+            """,
+            (telegram_id, makeup_day),
+        ) as cur:
+            return await cur.fetchall()
+
+    async def get_penances_for_missed_day(
+        self, telegram_id: int, missed_day: int
+    ) -> list[aiosqlite.Row]:
+        """All penance rows (any status) for a given missed day. Used by
+        the compliance grid render to show day-cell color."""
+        async with self._conn.execute(
+            """
+            SELECT * FROM penance_log
+            WHERE telegram_id = ? AND missed_day = ?
+            ORDER BY id ASC
+            """,
+            (telegram_id, missed_day),
+        ) as cur:
+            return await cur.fetchall()
+
+    async def resolve_penance(self, id: int, status: str) -> None:
+        """Mark a penance resolved. Status: 'recovered' | 'failed' | a verdict
+        for arbitration cases ('passed', etc.)."""
+        await self._conn.execute(
+            """
+            UPDATE penance_log
+            SET status = ?, resolved_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (status, id),
+        )
+        await self._conn.commit()
+
+    # ── user tone + payment ───────────────────────────────────────────
+
+    async def set_user_tone(self, telegram_id: int, tone: str | None) -> None:
+        """Set this user's preferred tone. None resets to default ('cardi')."""
+        await self._conn.execute(
+            "UPDATE users SET tone = ? WHERE telegram_id = ?",
+            (tone or "cardi", telegram_id),
+        )
+        await self._conn.commit()
+
+    async def get_user_tone(self, telegram_id: int) -> str:
+        async with self._conn.execute(
+            "SELECT tone FROM users WHERE telegram_id = ?", (telegram_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        if not row or not row["tone"]:
+            return "cardi"
+        return row["tone"]
+
+    async def set_payment_confirmed(self, telegram_id: int, day: int) -> None:
+        """Admin marks Venmo/Zelle payment received for self-fail buy-in."""
+        await self._conn.execute(
+            "UPDATE users SET payment_confirmed_day = ? WHERE telegram_id = ?",
+            (day, telegram_id),
+        )
+        await self._conn.commit()
 
     async def get_recent_conversations(
         self,
