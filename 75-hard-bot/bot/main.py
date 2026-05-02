@@ -65,6 +65,22 @@ async def post_init(application: Application) -> None:
             await db.set_user_timezone(u["telegram_id"], USER_TIMEZONES[u["name"]])
 
     schedule_jobs(application.job_queue)
+
+    # Deploy-time release announcement: ~5s after startup, check whether
+    # there's pending release-notes content + debounce hasn't fired recently.
+    # If so, post to the group. Morning card retains its existing fallback
+    # behavior so a debounced note still goes out next morning.
+    async def _release_announce_callback(_ctx) -> None:
+        try:
+            from bot.release_notes import maybe_announce_release
+            await maybe_announce_release(application)
+        except Exception as e:
+            logger.warning("post_init release announce check failed: %s", e)
+
+    application.job_queue.run_once(
+        _release_announce_callback, when=5, name="release_announce_check",
+    )
+
     logger.info(
         "Bot initialized. %d users, jobs scheduled. group_chat_id=%s, invite_link=%s",
         len(await db.get_all_users()),
@@ -284,7 +300,10 @@ def main() -> None:
             elif result.get("media") == "compliance_grid":
                 from bot.handlers.compliance import send_compliance_grid_dm
                 await send_compliance_grid_dm(update, context)
-                return
+                # Don't return — fall through so Luke's follow-up text (the
+                # per-day disambiguation question for unresolved days) also
+                # sends. The tool returns "MEDIA:compliance_grid\n\n
+                # GRID_FOLLOWUP: ..." which Claude reads to draft the prompt.
 
             # Refresh the daily card if a tracker action was taken
             if result.get("refresh_card"):

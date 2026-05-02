@@ -39,14 +39,21 @@ async def morning_card_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # 0. Release notes — fire any unseen user-facing notes before the morning sequence.
     #    Marker only advances on successful post, so a failed send retries tomorrow.
+    #    Also stamps last_release_announce_at so the deploy-time path debounces
+    #    against this morning post (avoids back-to-back announcements when a
+    #    deploy lands shortly after the 7am card).
     if chat_id:
         try:
+            from datetime import datetime as _dt, timezone as _tz
             raw = await db.get_setting("last_announced_release_version")
             last_seen = int(raw) if raw is not None else None
             announcement = build_announcement(last_seen)
             if announcement:
                 await context.bot.send_message(chat_id=chat_id, text=announcement)
                 await db.set_setting("last_announced_release_version", str(CURRENT_VERSION))
+                await db.set_setting(
+                    "last_release_announce_at", _dt.now(_tz.utc).isoformat(),
+                )
                 logger.info("release-notes: posted announcement, marker → v%d", CURRENT_VERSION)
         except Exception as e:
             logger.warning("release-notes: announcement failed (%s); will retry tomorrow", e)

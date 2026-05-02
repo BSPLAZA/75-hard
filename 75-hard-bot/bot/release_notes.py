@@ -4,9 +4,28 @@ Each entry is one deploy. The author of the deploy decides whether the change
 is user-facing and what to say. Empty `user_facing` = silent (internal change,
 nothing to announce).
 
-The morning card job reads `CURRENT_VERSION` against the `last_announced_release_version`
-setting in `bot_settings` and posts any unseen non-empty notes to the group chat.
+Announcement triggers (in order of precedence):
+  1. DEPLOY-TIME: maybe_announce_release runs ~5s after every bot startup.
+     If there's pending content AND it's been > DEBOUNCE_MINUTES since the
+     last announce, post + advance marker. Otherwise hold.
+  2. MORNING CARD FALLBACK: morning_card_job at 7am ET also calls
+     build_announcement and posts anything still pending. Catches the case
+     where deploy-time was held by debounce and no further deploy happened.
+
+The debounce batches a flurry of deploys into one announcement: if v54 is
+announced at 6pm and v55 ships at 6:30pm, v55 is held; if v56 ships at 7pm,
+both v55+v56 batch into the next allowed window.
 """
+
+import logging
+from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger(__name__)
+
+# How long after a deploy-time announcement we suppress further announcements.
+# Bryan: "we don't want to overwhelm the message if we're doing like five
+# production releases in one day". 60 min = generous but not all-day silent.
+RELEASE_ANNOUNCE_DEBOUNCE_MINUTES = 60
 
 RELEASES: list[dict] = [
     {
@@ -69,3 +88,66 @@ def build_announcement(last_seen: int | None, releases: list[dict] | None = None
     # Multiple notes: header + each note as its own block. Two newlines between
     # blocks for visual breathing room.
     return "yo couple updates fr\n\n" + "\n\n".join(notes)
+
+
+def _is_within_debounce(last_announce_iso: str | None, now: datetime | None = None) -> bool:
+    """True if a previous announcement landed within the debounce window.
+
+    Pure helper — no DB I/O — so it's trivially testable. now defaulted to
+    real UTC clock; tests pass an explicit datetime.
+    """
+    if not last_announce_iso:
+        return False
+    try:
+        last_at = datetime.fromisoformat(last_announce_iso)
+        if last_at.tzinfo is None:
+            last_at = last_at.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return False
+    if now is None:
+        now = datetime.now(timezone.utc)
+    return (now - last_at) < timedelta(minutes=RELEASE_ANNOUNCE_DEBOUNCE_MINUTES)
+
+
+async def maybe_announce_release(application) -> bool:
+    """Deploy-time release announcement with debounce.
+
+    Returns True iff an announcement was posted this call. False otherwise
+    (no pending content, debounce active, no group chat configured, or
+    send failed). Side effects on success: post to the group, advance the
+    last_announced_release_version marker, write last_release_announce_at.
+    """
+    db = application.bot_data.get("db")
+    chat_id = application.bot_data.get("group_chat_id")
+    if db is None or not chat_id:
+        return False
+
+    raw_marker = await db.get_setting("last_announced_release_version")
+    last_seen = int(raw_marker) if raw_marker is not None else None
+    msg = build_announcement(last_seen)
+    if not msg:
+        return False  # nothing to say
+
+    last_at_iso = await db.get_setting("last_release_announce_at")
+    if _is_within_debounce(last_at_iso):
+        logger.info(
+            "release-notes: deploy-time send debounced (last announced %s, "
+            "window %d min). morning card will pick it up if no later deploy.",
+            last_at_iso, RELEASE_ANNOUNCE_DEBOUNCE_MINUTES,
+        )
+        return False
+
+    try:
+        await application.bot.send_message(chat_id=chat_id, text=msg)
+    except Exception as e:
+        logger.warning("release-notes: deploy-time announcement send failed (%s)", e)
+        return False
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.set_setting("last_announced_release_version", str(CURRENT_VERSION))
+    await db.set_setting("last_release_announce_at", now_iso)
+    logger.info(
+        "release-notes: deploy-time announcement posted, marker → v%d at %s",
+        CURRENT_VERSION, now_iso,
+    )
+    return True

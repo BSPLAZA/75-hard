@@ -374,7 +374,11 @@ TOOLS = [
             "Render the user's compliance grid — all 75 days × 6 tasks colored by state "
             "(complete / unmarked / in-penance / recovered / failed / arbitration / future). "
             "Use when the user asks to see their progress overview, history, where they missed days, "
-            "or 'show me my grid'. Returns a PNG image of the full challenge."
+            "or 'show me my grid'. Sends a PNG image AND returns a GRID_FOLLOWUP analysis listing any "
+            "unresolved-but-fixable days. After this tool call, ALWAYS write a short follow-up message "
+            "to the user that lists each unresolved day in bullet form and asks per day whether they "
+            "did it (forgot to log → backfill_task) or missed it (need penance → declare_penance). "
+            "When the user replies, dispatch backfill_task or declare_penance per task per day in one turn."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },
@@ -1370,7 +1374,51 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
         return f"Tone updated. Now flavoring as: {safe}"
 
     elif tool_name == "get_my_compliance_grid":
-        return "MEDIA:compliance_grid"
+        # Render the image (handled by main.py via the MEDIA: signal) AND surface
+        # any unresolved-but-still-fixable days so Luke can follow up with a
+        # per-day disambiguation prompt instead of dropping the conversation.
+        from bot.penance import PENANCE_ABLE_TASKS, TASK_TARGETS
+        retro_active = await db.is_retro_grace_active(day)
+        # Eligible-to-prompt window: yesterday by default, or every past day
+        # during an open retro-audit window. (backfill_task accepts Day 1
+        # always, but we don't auto-prompt for it outside retro to avoid
+        # noise from challenges where Day 1 was never properly logged.)
+        if retro_active:
+            eligible_days = list(range(1, day))
+        elif day >= 2:
+            eligible_days = [day - 1]
+        else:
+            eligible_days = []
+
+        gaps: list[tuple[int, list[str]]] = []
+        for d in eligible_days:
+            checkin_row = await db.get_checkin(user_id, d)
+            c = dict(checkin_row) if checkin_row else {}
+            existing = await db.get_penances_for_missed_day(user_id, d)
+            covered = {
+                dict(r)["task"] for r in existing
+                if dict(r)["status"] in ("in_progress", "recovered", "arbitration_pending")
+            }
+            missing = []
+            for task in sorted(PENANCE_ABLE_TASKS):
+                col, _ = TASK_TARGETS[task]
+                if not c.get(col) and task not in covered:
+                    missing.append(task)
+            if missing:
+                gaps.append((d, missing))
+
+        if not gaps:
+            tail = "no unresolved days within the editable window. send the grid and tell them they're caught up."
+        else:
+            lines = [f"day {d}: {', '.join(t)}" for d, t in gaps]
+            tail = (
+                f"unresolved days within editable window ({len(gaps)} total): "
+                + " | ".join(lines)
+                + ". after sending the grid, ASK the user per day: did you do it (and forgot to log) "
+                "or miss it (need penance)? walk through each day. one short message listing the days "
+                "in a bulleted format. when they reply, route per-task to backfill_task or declare_penance."
+            )
+        return f"MEDIA:compliance_grid\n\nGRID_FOLLOWUP: {tail}"
 
     elif tool_name == "get_timelapse":
         photos = await db.get_photo_file_ids(user_id)
@@ -1760,9 +1808,11 @@ async def chat_with_luke(
                             backfill_photo_day = int(result.split("BACKFILL_PHOTO:")[1])
                         except (ValueError, IndexError):
                             pass
-                    # Capture media requests
+                    # Capture media requests. Tool result format is
+                    # "MEDIA:<media_name>" optionally followed by "\n\n<extra
+                    # tool-result text>" that Claude can use in its reply.
                     if result.startswith("MEDIA:"):
-                        media = result.split("MEDIA:")[1]
+                        media = result.split("MEDIA:", 1)[1].split("\n", 1)[0].strip()
                     # Capture card refresh signals
                     if result.startswith("REFRESH_CARD:"):
                         context_data["refresh_card"] = True
