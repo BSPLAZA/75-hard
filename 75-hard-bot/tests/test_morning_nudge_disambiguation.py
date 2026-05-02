@@ -116,3 +116,152 @@ def test_morning_after_reminder_uses_disambiguation_phrasing():
     assert "did you do it and forget" in text_block or "forget to log" in text_block
     assert "penance" in text_block
     assert "midnight pacific" in text_block
+
+
+# ── behavioral tests with stub bot + real DB ───────────────────────────
+
+import pytest
+import pytest_asyncio
+from types import SimpleNamespace
+
+from bot.database import Database
+
+
+class _StubBot:
+    def __init__(self):
+        self.sent: list[dict] = []
+
+    async def send_message(self, *, chat_id, text, **kwargs):
+        self.sent.append({"chat_id": chat_id, "text": text, **kwargs})
+
+
+def _ctx(db, bot):
+    return SimpleNamespace(bot_data={"db": db, "group_chat_id": -1}, bot=bot)
+
+
+@pytest_asyncio.fixture
+async def db_with_three_users():
+    """Bryan + Kat + Cam, all dm_registered. Day-18 card is active so
+    yesterday=17."""
+    database = Database(":memory:")
+    await database.init()
+    for tid, name in [(111, "Bryan"), (222, "Kat"), (333, "Cam")]:
+        await database.add_user(tid, name, tier=75)
+        await database._conn.execute(
+            "UPDATE users SET dm_registered = 1 WHERE telegram_id = ?", (tid,)
+        )
+    await database._conn.commit()
+    await database.save_card(day_number=18, date="2026-05-02", message_id=1, chat_id=-1)
+    yield database
+    await database.close()
+
+
+@pytest.mark.asyncio
+async def test_nudge_drives_from_active_users_not_just_checkins(db_with_three_users):
+    """A user with NO checkin row for yesterday must still get nudged.
+    Previously the nudge iterated checkins and silently skipped these users."""
+    db = db_with_three_users
+    # Only Bryan has a checkin row; Kat + Cam have nothing
+    await db.create_checkin(111, 17, "2026-05-01")  # all 0
+
+    from bot.jobs.scheduler import morning_after_reminder_job
+    bot = _StubBot()
+    await morning_after_reminder_job(_ctx(db, bot))
+
+    chat_ids = {m["chat_id"] for m in bot.sent}
+    assert 111 in chat_ids
+    assert 222 in chat_ids, "Kat had no checkin row but missed everything — must be nudged"
+    assert 333 in chat_ids, "Cam same"
+
+
+@pytest.mark.asyncio
+async def test_nudge_filters_out_already_declared_penance(db_with_three_users):
+    """If the user declared penance for water last night, the morning nudge
+    must NOT list water again."""
+    db = db_with_three_users
+    await db.create_checkin(111, 17, "2026-05-01")  # all 0
+    # Bryan declared water penance last night
+    await db.add_penance(111, missed_day=17, makeup_day=18, task="water")
+
+    from bot.jobs.scheduler import morning_after_reminder_job
+    bot = _StubBot()
+    await morning_after_reminder_job(_ctx(db, bot))
+
+    bryan_msgs = [m for m in bot.sent if m["chat_id"] == 111]
+    assert bryan_msgs, "Bryan still has other tasks missing — should still be nudged"
+    text = bryan_msgs[0]["text"]
+    # Water must be excluded; other tasks still listed
+    assert "water" not in text.lower()
+    assert "indoor workout" in text.lower() or "outdoor workout" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_nudge_skips_user_when_all_misses_are_already_handled(db_with_three_users):
+    """If every missing task already has a penance row, send NO nudge — no
+    point asking 'did you do it?' for things already disambiguated."""
+    db = db_with_three_users
+    await db.create_checkin(111, 17, "2026-05-01")  # all 0
+    # Manually declare penance for every penance-able task; diet is binary
+    # so the bot can't penance it but it's also not what the nudge focuses on
+    for task in ("workout_indoor", "workout_outdoor", "water", "reading", "photo"):
+        await db.add_penance(111, missed_day=17, makeup_day=18, task=task)
+    # Diet still missing but it's binary — nudge should still fire about it
+    # since we can't auto-cover diet via penance.
+
+    from bot.jobs.scheduler import morning_after_reminder_job
+    bot = _StubBot()
+    await morning_after_reminder_job(_ctx(db, bot))
+
+    bryan_msgs = [m for m in bot.sent if m["chat_id"] == 111]
+    assert len(bryan_msgs) == 1, "Bryan still has diet uncovered → nudge fires"
+    assert "diet" in bryan_msgs[0]["text"].lower()
+    # Nothing else should be in the nudge
+    text = bryan_msgs[0]["text"].lower()
+    assert "workout" not in text
+    assert "water" not in text
+    assert "reading" not in text
+
+
+@pytest.mark.asyncio
+async def test_nudge_skips_fully_complete_user(db_with_three_users):
+    """User who completed everything yesterday gets NO nudge."""
+    db = db_with_three_users
+    await db.create_checkin(111, 17, "2026-05-01")
+    await db._conn.execute(
+        """UPDATE daily_checkins
+           SET workout_1_done=1, workout_2_done=1, water_cups=16,
+               diet_done=1, reading_done=1, photo_done=1
+           WHERE telegram_id=? AND day_number=?""",
+        (111, 17),
+    )
+    await db._conn.commit()
+
+    from bot.jobs.scheduler import morning_after_reminder_job
+    bot = _StubBot()
+    await morning_after_reminder_job(_ctx(db, bot))
+
+    assert not any(m["chat_id"] == 111 for m in bot.sent)
+
+
+@pytest.mark.asyncio
+async def test_nudge_lists_water_with_friendly_label(db_with_three_users):
+    """Regression — old code emitted 'Water (8/16)' style labels. New code
+    uses canonical task names with friendly labels for the body."""
+    db = db_with_three_users
+    await db.create_checkin(111, 17, "2026-05-01")
+    await db._conn.execute(
+        "UPDATE daily_checkins SET water_cups=8 WHERE telegram_id=? AND day_number=?",
+        (111, 17),
+    )
+    await db._conn.commit()
+
+    from bot.jobs.scheduler import morning_after_reminder_job
+    bot = _StubBot()
+    await morning_after_reminder_job(_ctx(db, bot))
+
+    bryan_msgs = [m for m in bot.sent if m["chat_id"] == 111]
+    assert bryan_msgs
+    text = bryan_msgs[0]["text"].lower()
+    assert "water" in text
+    # Old phrasing must be gone
+    assert "8/16" not in text and "(8" not in text

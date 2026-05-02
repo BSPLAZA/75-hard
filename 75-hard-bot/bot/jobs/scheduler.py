@@ -440,33 +440,74 @@ async def morning_after_reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None
     """9 AM ET -- Proactive morning nudge: per unmarked yesterday task, ask the user
     whether they did it (and forgot to log) or missed it (and need penance).
 
-    Upgrades the static nudge to the disambiguation flow described in the design
-    (Flow A). The user's DM reply routes through chat_with_luke, which calls
-    backfill_task or declare_penance per task per critical_rule 8.
+    The user's DM reply routes through chat_with_luke, which calls backfill_task
+    or declare_penance per task per critical_rule 8.
 
-    The outbound nudge is also written to conversation_log (telegram_id=user_id,
-    source='dm', user_message='[bot_nudge:morning_after]') so when the user replies,
-    Luke's history hydrate picks up the nudge as prior context — otherwise Luke
-    would see the user's reply in a vacuum.
+    Drives from active_users (not the checkins table), so users who never logged
+    anything yesterday still get the nudge — they're the highest-priority case.
+    Filters out tasks the user already has an active penance row for (declared
+    last night via Luke), so we don't nag about things already handled.
+
+    The outbound nudge is written to conversation_log so Luke's history hydrate
+    picks up the nudge as prior context when the user replies.
     """
     db = context.bot_data["db"]
     from bot.utils.progress import get_current_challenge_day
+    from bot.penance import TASK_TARGETS
+
     day = await get_current_challenge_day(db)
     yesterday = day - 1
     if yesterday < 1:
         return
 
-    checkins = await db.get_all_checkins_for_day(yesterday)
-    for c in checkins:
-        c = dict(c)
-        if is_all_complete(c):
-            continue
-        missing = get_missing_tasks(c)
-        user = await db.get_user(c["telegram_id"])
-        if not user or not user["dm_registered"]:
+    # Friendly labels for the DM body. Maps canonical task names to the
+    # phrasing users see in the nudge.
+    TASK_LABELS = {
+        "workout_indoor": "indoor workout",
+        "workout_outdoor": "outdoor workout",
+        "water": "water (gallon)",
+        "diet": "diet",
+        "reading": "reading",
+        "photo": "progress photo",
+    }
+
+    active_users = await db.get_active_users()
+    for u in active_users:
+        u = dict(u)
+        if not u.get("dm_registered"):
             continue
 
-        missing_list = "\n".join(f"  • {m.lower()}" for m in missing)
+        c_row = await db.get_checkin(u["telegram_id"], yesterday)
+        c = dict(c_row) if c_row else {}
+
+        # Compute missing tasks using canonical names from TASK_TARGETS so we
+        # can cross-reference penance_log without a label-mapping detour.
+        missing_canonical: list[str] = []
+        for task, (column, target) in TASK_TARGETS.items():
+            value = c.get(column, 0) or 0
+            try:
+                if int(value) < target:
+                    missing_canonical.append(task)
+            except (TypeError, ValueError):
+                missing_canonical.append(task)
+
+        if not missing_canonical:
+            continue  # all complete (or all-complete since no checkin row yet
+                       # is impossible — we'd have hit the `value < target` branch)
+
+        # Filter out tasks the user already declared penance for (or whose
+        # arbitration is pending). They've already been disambiguated; nagging
+        # again would just confuse.
+        existing = await db.get_penances_for_missed_day(u["telegram_id"], yesterday)
+        already_covered = {
+            dict(r)["task"] for r in existing
+            if dict(r)["status"] in ("in_progress", "recovered", "arbitration_pending")
+        }
+        nag_tasks = [t for t in missing_canonical if t not in already_covered]
+        if not nag_tasks:
+            continue  # everything missing is already handled
+
+        missing_list = "\n".join(f"  • {TASK_LABELS[t]}" for t in nag_tasks)
         nudge_text = (
             f"yo — didn't see these from yesterday (day {yesterday}):\n\n"
             f"{missing_list}\n\n"
@@ -475,19 +516,17 @@ async def morning_after_reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None
             f"backfill closes at midnight pacific tonight, after that it's locked fr."
         )
         try:
-            await context.bot.send_message(chat_id=c["telegram_id"], text=nudge_text)
-            # Persist in conversation_log so Luke's history hydrate sees the nudge
-            # as prior context when the user replies.
+            await context.bot.send_message(chat_id=u["telegram_id"], text=nudge_text)
             await db.add_conversation_log(
-                telegram_id=c["telegram_id"],
-                user_name=user["name"],
+                telegram_id=u["telegram_id"],
+                user_name=u["name"],
                 source="dm",
                 user_message="[bot_nudge:morning_after]",
                 luke_response=nudge_text,
                 tools_called=None,
             )
         except Exception as e:
-            logger.warning("morning_after nudge failed for %s: %s", c.get("name"), e)
+            logger.warning("morning_after nudge failed for %s: %s", u.get("name"), e)
 
 
 async def cutoff_warning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
