@@ -25,6 +25,18 @@ RELEASES: list[dict] = [
         "version": 53,
         "user_facing": "",  # Release-notes mechanism itself — meta, no user-facing change
     },
+    {
+        "version": 54,
+        "user_facing": (
+            "big drop today, here's what's new:\n"
+            "• penance system live. miss somethin yesterday? do it 2x today and stay in. "
+            "just dm me ('i missed water yesterday' etc) and i'll set it up.\n"
+            "• diet violations go to group vote. wine, cheat meals → squad decides pass, "
+            "penance, or fail.\n"
+            "• compliance grid. dm 'show my grid' to see your whole 75 days at once.\n"
+            "• custom voice. dm 'talk to me like X' if cardi ain't your vibe."
+        ),
+    },
 ]
 
 CURRENT_VERSION: int = max(r["version"] for r in RELEASES)
@@ -35,8 +47,13 @@ def build_announcement(last_seen: int | None, releases: list[dict] | None = None
 
     `last_seen` is the highest version the group has already been told about
     (None means they've never been told about anything). Walks forward, picks
-    up every version > last_seen with a non-empty `user_facing` string, and
-    joins them with blank lines.
+    up every version > last_seen with a non-empty `user_facing` string.
+
+    Format: when there's exactly ONE note, return its text verbatim (single-update
+    case looks weird with a list header). When 2+, prepend a brief header and
+    concatenate each note as its own block. Each release author is responsible
+    for bulleting sub-points within their own note (Bryan's feedback: free-text
+    multi-update paragraphs make people miss items).
     """
     rels = releases if releases is not None else RELEASES
     threshold = last_seen if last_seen is not None else -1
@@ -47,4 +64,8 @@ def build_announcement(last_seen: int | None, releases: list[dict] | None = None
     ]
     if not notes:
         return None
-    return "\n\n".join(notes)
+    if len(notes) == 1:
+        return notes[0]
+    # Multiple notes: header + each note as its own block. Two newlines between
+    # blocks for visual breathing room.
+    return "yo couple updates fr:\n\n" + "\n\n".join(notes)
