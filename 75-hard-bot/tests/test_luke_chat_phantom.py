@@ -98,3 +98,63 @@ class TestPhantomRowFilter:
 
     def test_water_phantom_filtered(self):
         assert _looks_like_phantom_row("you're at 4 cups, 12 to go", None) is True
+
+
+class TestPenancePhantom:
+    """Penance state claims must be backed by a declare_penance call.
+
+    These mirror the diet/water phantom detection — Luke saying 'your penance
+    is set' without actually calling declare_penance is the same failure class
+    as claiming '170g goal hit' without log_food.
+    """
+
+    def test_penance_set_no_tool_is_phantom(self):
+        from bot.utils.luke_chat import _check_state_claims
+        result = _check_state_claims("got it. your penance is set for water today.", [])
+        assert result is not None
+        claim_class, _snippet = result
+        assert claim_class == "penance"
+
+    def test_penance_set_with_declare_penance_is_legitimate(self):
+        from bot.utils.luke_chat import _check_state_claims
+        result = _check_state_claims(
+            "got it. your penance is set for water today.",
+            ["declare_penance"],
+        )
+        assert result is None
+
+    def test_marked_as_penance_no_tool_is_phantom(self):
+        from bot.utils.luke_chat import _check_state_claims
+        result = _check_state_claims("ok, marked as penance — 2x today.", [])
+        assert result is not None
+        assert result[0] == "penance"
+
+    def test_set_up_penance_no_tool_is_phantom(self):
+        from bot.utils.luke_chat import _check_state_claims
+        result = _check_state_claims("set up penance for the workout. crush it.", [])
+        assert result is not None
+        assert result[0] == "penance"
+
+    def test_penance_phantom_filter_hides_from_history(self):
+        # Phantom rows must be filtered out of history hydration so old lies
+        # don't seed the next turn's chat memory.
+        assert _looks_like_phantom_row("your penance is set for reading", None) is True
+
+    def test_penance_with_tool_kept_in_history(self):
+        import json as _json
+        assert _looks_like_phantom_row(
+            "your penance is set for reading",
+            _json.dumps(["declare_penance"]),
+        ) is False
+
+    def test_water_tool_does_not_legitimize_penance_claim(self):
+        """A penance claim must be backed by declare_penance specifically,
+        not just any state-changing tool. Otherwise log_water_dm could
+        cover a phantom 'penance is set' claim."""
+        from bot.utils.luke_chat import _check_state_claims
+        result = _check_state_claims(
+            "your penance is set for water",
+            ["log_water_dm"],
+        )
+        assert result is not None
+        assert result[0] == "penance"

@@ -415,7 +415,18 @@ async def weekly_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def morning_after_reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """9 AM ET -- Remind users about yesterday's incomplete tasks (gives 6h to lock)."""
+    """9 AM ET -- Proactive morning nudge: per unmarked yesterday task, ask the user
+    whether they did it (and forgot to log) or missed it (and need penance).
+
+    Upgrades the static nudge to the disambiguation flow described in the design
+    (Flow A). The user's DM reply routes through chat_with_luke, which calls
+    backfill_task or declare_penance per task per critical_rule 8.
+
+    The outbound nudge is also written to conversation_log (telegram_id=user_id,
+    source='dm', user_message='[bot_nudge:morning_after]') so when the user replies,
+    Luke's history hydrate picks up the nudge as prior context — otherwise Luke
+    would see the user's reply in a vacuum.
+    """
     db = context.bot_data["db"]
     from bot.utils.progress import get_current_challenge_day
     day = await get_current_challenge_day(db)
@@ -433,18 +444,28 @@ async def morning_after_reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None
         if not user or not user["dm_registered"]:
             continue
 
-        missing_list = "\n".join(f"  - {m.lower()}" for m in missing)
+        missing_list = "\n".join(f"  • {m.lower()}" for m in missing)
+        nudge_text = (
+            f"yo — didn't see these from yesterday (day {yesterday}):\n\n"
+            f"{missing_list}\n\n"
+            f"for each one tell me — did you do it and forget to log? "
+            f"or you missed it and need penance? "
+            f"backfill closes at midnight pacific tonight, after that it's locked fr."
+        )
         try:
-            await context.bot.send_message(
-                chat_id=c["telegram_id"],
-                text=(
-                    f"hey -- you still have incomplete tasks from yesterday (day {yesterday}):\n\n"
-                    f"{missing_list}\n\n"
-                    f"log them now if you did them. you have until midnight PT tonight."
-                ),
+            await context.bot.send_message(chat_id=c["telegram_id"], text=nudge_text)
+            # Persist in conversation_log so Luke's history hydrate sees the nudge
+            # as prior context when the user replies.
+            await db.add_conversation_log(
+                telegram_id=c["telegram_id"],
+                user_name=user["name"],
+                source="dm",
+                user_message="[bot_nudge:morning_after]",
+                luke_response=nudge_text,
+                tools_called=None,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("morning_after nudge failed for %s: %s", c.get("name"), e)
 
 
 async def cutoff_warning_job(context: ContextTypes.DEFAULT_TYPE) -> None:

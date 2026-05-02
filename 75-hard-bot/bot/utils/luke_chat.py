@@ -44,6 +44,13 @@ READ THESE FIRST. They override everything else below when they conflict.
    - "I worked out / ran / lifted" → log_workout_dm (NOT log_food)
    If a single message mixes domains ("I ran 5 miles and ate chicken"), call BOTH tools in this turn — log_workout_dm AND log_food. Never collapse a multi-domain message into one tool to "tidy up."
    When the user message is genuinely ambiguous (one short fragment, no clear domain), ASK before calling any tool. A clarifying question is cheaper than a wrong tool call you have to undo later.
+
+8. PENANCE DISAMBIGUATION. The 9am ET morning DM lists yesterday's UNMARKED tasks and asks the user, per task, whether they did it (and forgot to log) or missed it (and need penance). The user's reply may be ambiguous. Rules:
+   - NEVER call declare_penance without a specific task. If user says "I need penance" / "all penance" / "penance for everything" without naming the task, ASK FIRST: "for which? [list the unmarked tasks]". Then call declare_penance once per named task, in this turn.
+   - If user says "did them" / "all done" / "I did it" without naming the task, call backfill_task for EACH unmarked task in this turn.
+   - If user names some tasks specifically and is silent on others, act on the named ones and ASK about the rest in the same turn ("got it for water — and the workout?").
+   - NEVER claim "your penance is set" / "marked as penance" without a successful declare_penance tool call in this turn. State claims about penance state must be backed by a tool call (this generalizes critical_rule 5).
+   - declare_penance only accepts penance-able tasks (workout_indoor, workout_outdoor, water, reading, photo). For diet violations (cheat / alcohol), the user's path is log_violation (different tool — diet is binary, no penance possible). If user says "I had wine" or "I cheated on diet" don't try declare_penance — that'll be denied.
 </critical_rules>
 
 THE CHALLENGE RULES (you enforce these):
@@ -363,6 +370,38 @@ TOOLS = [
                 "detail": {
                     "type": "string",
                     "description": "Optional detail like water cup count, workout type, book title, or reading takeaway",
+                },
+            },
+            "required": ["task"],
+        },
+    },
+    {
+        "name": "declare_penance",
+        "description": (
+            "User missed a penance-able task on a past day and is committing to do 2x today as makeup. "
+            "Creates a penance_log row with status='in_progress' and makeup_day=today. "
+            "Penance-able tasks: workout_indoor, workout_outdoor, water, reading, photo. "
+            "DIET IS NOT PENANCE-ABLE — for diet violations (cheat / alcohol), use log_violation instead. "
+            "CRITICAL: never call this without a specific task. If the user replies to a multi-task morning "
+            "nudge with vague phrasing like 'all penance' or 'I need penance', ASK which task first. "
+            "Per missed task, only ONE penance row should exist — don't double-declare. "
+            "Common trigger: morning nudge → user says 'I missed my workout yesterday, doing 2x today'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "enum": ["workout_indoor", "workout_outdoor", "water", "reading", "photo"],
+                    "description": "Which task is being penance'd. MUST be specific — never call this with a placeholder.",
+                },
+                "missed_day": {
+                    "type": "integer",
+                    "description": "The day the task was missed. Defaults to yesterday. For older days, pass explicitly.",
+                },
+                "detail": {
+                    "type": "string",
+                    "description": "Optional freeform note (e.g., 'forgot to log water', 'never did indoor').",
                 },
             },
             "required": ["task"],
@@ -975,6 +1014,62 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
 
         return result_msg
 
+    elif tool_name == "declare_penance":
+        from bot.penance import PENANCE_ABLE_TASKS
+
+        task = tool_input.get("task")
+        if not task:
+            return "DENIED: declare_penance requires a specific task. Ask the user which task before calling this."
+        if task not in PENANCE_ABLE_TASKS:
+            return (
+                f"DENIED: '{task}' is not penance-able. Penance applies to action-quantity tasks "
+                "(workout_indoor, workout_outdoor, water, reading, photo). "
+                "For diet violations use log_violation."
+            )
+
+        missed_day = tool_input.get("missed_day")
+        if missed_day is None:
+            missed_day = day - 1
+        else:
+            missed_day = int(missed_day)
+        if missed_day < 1:
+            return "DENIED: There's no Day 0 or earlier."
+        if missed_day >= day:
+            return f"DENIED: Day {missed_day} hasn't been missed yet — that's today or later."
+
+        # Don't double-declare: one in_progress / recovered penance per (user, missed_day, task).
+        existing = await db.get_penances_for_missed_day(user_id, missed_day)
+        for r in existing:
+            r = dict(r)
+            if r["task"] == task and r["status"] in ("in_progress", "recovered"):
+                return (
+                    f"DENIED: You already have an active or recovered penance for "
+                    f"{task.replace('_', ' ')} on day {missed_day}. No double-declaring."
+                )
+
+        makeup_day = day  # makeup happens today
+        retroactive = (missed_day < day - 1)
+        detail = tool_input.get("detail") or None
+        await db.add_penance(
+            telegram_id=user_id,
+            missed_day=missed_day,
+            makeup_day=makeup_day,
+            task=task,
+            retroactive=retroactive,
+            detail=detail,
+        )
+        await db.log_event(
+            user_id, None, "penance_declared",
+            f"missed_day={missed_day} task={task} retro={retroactive}",
+        )
+        # Friendly confirmation. Tone follows critical_rules — Luke's phrasing wraps this.
+        task_friendly = task.replace("_", " ")
+        return (
+            f"REFRESH_CARD: penance set for {task_friendly}, missed day {missed_day}. "
+            f"makeup target is 2x today (day {day}). cutoff is midnight PT tonight. "
+            f"if 2x not hit by then → fail flow."
+        )
+
     elif tool_name == "request_backfill_photo":
         import pytz as _pytz
         _PT = _pytz.timezone("US/Pacific")
@@ -1070,10 +1165,15 @@ _PHANTOM_TEXT_PATTERNS = [
     re.compile(r"\b\d+\s*/\s*16\s*(?:cups)?\b", re.I),
     re.compile(r"\b(?:added|bumped to|now at)\s+\d+\b", re.I),
     re.compile(r"\bday\s+\d+\s+at\s+\d+\s*g\b", re.I),
+    # Penance state claims: catch "your penance is set" / "marked as penance" /
+    # "set up penance for X" without a declare_penance tool call this turn.
+    re.compile(r"\b(?:your\s+)?penance\s+(?:is\s+)?(?:set|marked|locked|active)\b", re.I),
+    re.compile(r"\b(?:set\s+up|marked\s+as)\s+penance\b", re.I),
+    re.compile(r"\bpenance\s+for\s+\w+\s+(?:set|locked|active)\b", re.I),
 ]
 
 # Tool classes that legitimize a numerical state claim. If Luke claims a diet total,
-# at least one diet-context tool must have run this turn. Same for water.
+# at least one diet-context tool must have run this turn. Same for water and penance.
 _DIET_TOOLS = {
     "log_food", "get_diet_progress", "get_diet_log_for_day",
     "get_my_status", "get_my_status_for_day",
@@ -1083,11 +1183,15 @@ _WATER_TOOLS = {
     "log_water_dm", "fix_water", "backfill_task",
     "get_my_status", "get_my_status_for_day",
 }
+_PENANCE_TOOLS = {"declare_penance"}
 
 
 def _state_claim_pattern_class(matched_text: str) -> str:
-    """Classify a matched state-claim snippet into a tool family ('diet' or 'water')."""
+    """Classify a matched state-claim snippet into a tool family
+    ('penance', 'water', or 'diet')."""
     t = matched_text.lower()
+    if "penance" in t:
+        return "penance"
     if "/16" in t or "cup" in t:
         return "water"
     return "diet"
@@ -1109,7 +1213,12 @@ def _check_state_claims(text: str, tools_called: list[str]) -> tuple[str, str] |
         if not m:
             continue
         claim_class = _state_claim_pattern_class(m.group(0))
-        valid_tools = _DIET_TOOLS if claim_class == "diet" else _WATER_TOOLS
+        if claim_class == "penance":
+            valid_tools = _PENANCE_TOOLS
+        elif claim_class == "water":
+            valid_tools = _WATER_TOOLS
+        else:
+            valid_tools = _DIET_TOOLS
         if not (tools_set & valid_tools):
             return (claim_class, m.group(0))
     return None

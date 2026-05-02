@@ -21,12 +21,12 @@ BINARY_TASKS (just 'diet' currently) cannot — they fail or go to arbitration.
 
 from typing import Literal
 
-# Canonical task names. "indoor_workout" / "outdoor_workout" replace the
+# Canonical task names. "workout_indoor" / "workout_outdoor" replace the
 # schema's workout_1 / workout_2 in user-facing contexts (per group feedback —
 # users don't think of them by number, they think of them by location).
 TASKS: list[str] = [
-    "indoor_workout",
-    "outdoor_workout",
+    "workout_indoor",
+    "workout_outdoor",
     "water",
     "diet",
     "reading",
@@ -35,8 +35,8 @@ TASKS: list[str] = [
 
 # Action-quantity tasks: missing one allows penance (do 2× makeup_day to recover).
 PENANCE_ABLE_TASKS: frozenset[str] = frozenset({
-    "indoor_workout",
-    "outdoor_workout",
+    "workout_indoor",
+    "workout_outdoor",
     "water",
     "reading",
     "photo",
@@ -49,8 +49,8 @@ BINARY_TASKS: frozenset[str] = frozenset({"diet"})
 # Maps each task to (daily_checkins column, base target). Booleans use 1.
 # water uses 16 cups (1 gallon). All targets are doubled when in penance.
 TASK_TARGETS: dict[str, tuple[str, int]] = {
-    "indoor_workout": ("workout_1_done", 1),
-    "outdoor_workout": ("workout_2_done", 1),
+    "workout_indoor": ("workout_1_done", 1),
+    "workout_outdoor": ("workout_2_done", 1),
     "water": ("water_cups", 16),
     "diet": ("diet_done", 1),
     "reading": ("reading_done", 1),

@@ -49,7 +49,7 @@ class TestConstants:
         assert target_for_task("water", in_penance=True) == 32
 
     def test_workout_penance_target_is_two(self):
-        assert target_for_task("indoor_workout", in_penance=True) == 2
+        assert target_for_task("workout_indoor", in_penance=True) == 2
 
     def test_unknown_task_raises(self):
         with pytest.raises(ValueError):
@@ -83,12 +83,12 @@ class TestIsTargetMet:
         assert is_target_met({"water_cups": 32}, "water", in_penance=True)
 
     def test_workout_done_boolean(self):
-        assert is_target_met({"workout_1_done": 1}, "indoor_workout")
-        assert not is_target_met({"workout_1_done": 0}, "indoor_workout")
+        assert is_target_met({"workout_1_done": 1}, "workout_indoor")
+        assert not is_target_met({"workout_1_done": 0}, "workout_indoor")
 
     def test_workout_in_penance_needs_two(self):
-        assert not is_target_met({"workout_1_done": 1}, "indoor_workout", in_penance=True)
-        assert is_target_met({"workout_1_done": 2}, "indoor_workout", in_penance=True)
+        assert not is_target_met({"workout_1_done": 1}, "workout_indoor", in_penance=True)
+        assert is_target_met({"workout_1_done": 2}, "workout_indoor", in_penance=True)
 
     def test_none_checkin_not_met(self):
         assert not is_target_met(None, "water")
@@ -252,7 +252,7 @@ async def test_add_retroactive_penance(db):
 async def test_get_active_penances_filters_by_status(db):
     p1 = await db.add_penance(111, 5, 6, "water")
     p2 = await db.add_penance(111, 7, 8, "reading")
-    p3 = await db.add_penance(111, 9, 10, "indoor_workout")
+    p3 = await db.add_penance(111, 9, 10, "workout_indoor")
     await db.resolve_penance(p1, "recovered")
     await db.resolve_penance(p2, "failed")
 
@@ -278,7 +278,7 @@ async def test_get_penances_for_makeup_day(db):
     # Different user, same day — shouldn't appear
     await db.add_penance(222, 17, 18, "water")
     # Same user, different makeup day — shouldn't appear
-    await db.add_penance(111, 16, 17, "indoor_workout")
+    await db.add_penance(111, 16, 17, "workout_indoor")
 
     rows = await db.get_penances_for_makeup_day(111, 18)
     tasks = sorted(dict(r)["task"] for r in rows)
