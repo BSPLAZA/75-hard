@@ -703,15 +703,24 @@ async def spicy_moment_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         prev_raw = await db.get_all_checkins_for_day(day - 1)
         yesterday_dicts = [dict(c) for c in prev_raw] if prev_raw else None
 
-    # Today's food summary across all users (bonus signal for the AI)
+    # Today's food summary across all users — AGGREGATE ONLY, never itemized.
+    # Specific food entries are private DM content; the spicy-moment prompt
+    # forbids enumeration but the safer path is to not feed raw items at all.
     food_lines = []
     for c in today_dicts:
         try:
             entries = await db.get_diet_entries(c["telegram_id"], day)
             if not entries:
                 continue
-            short = [f"{e.get('entry_text','')[:40]}" for e in entries]
-            food_lines.append(f"  {c['name']}: " + "; ".join(short))
+            total_g = 0
+            for e in entries:
+                v = e.get("extracted_value")
+                if e.get("extracted_unit") == "g" and v is not None:
+                    try:
+                        total_g += int(float(v))
+                    except (TypeError, ValueError):
+                        pass
+            food_lines.append(f"  {c['name']}: {len(entries)} entries, {total_g}g protein")
         except Exception:
             pass
     food_summary = "\n".join(food_lines)

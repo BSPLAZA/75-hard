@@ -317,6 +317,65 @@ def main() -> None:
             # Mark that the last interaction was AI chat (for quality tracking)
             context.user_data["last_was_ai_chat"] = True
 
+    async def group_mention_handler(update: Update, context):
+        """In the group chat, respond to AI-chat messages that explicitly call
+        Luke — either by @-mention or by replying to one of his messages.
+        Plain group chatter still gets ignored. Tool-side effects that only
+        make sense in DM (media generators, photo backfill priming, daily-card
+        refresh) are NOT applied here — group output is text-only.
+        """
+        msg = update.message
+        if msg is None or not msg.text:
+            return
+        if update.effective_chat is None or update.effective_chat.type not in ("group", "supergroup"):
+            return
+
+        bot_username = (context.bot.username or "").lower()
+        text = msg.text
+        # Trigger: @-mention OR reply to a bot message
+        is_mention = bool(bot_username) and f"@{bot_username}" in text.lower()
+        is_reply_to_bot = (
+            msg.reply_to_message is not None
+            and msg.reply_to_message.from_user is not None
+            and msg.reply_to_message.from_user.id == context.bot.id
+        )
+        if not (is_mention or is_reply_to_bot):
+            return
+
+        # Strip the @mention from the prompt so Luke sees clean text
+        import re as _re
+        clean = text
+        if bot_username:
+            clean = _re.sub(rf"@{_re.escape(bot_username)}", "", clean, flags=_re.IGNORECASE).strip()
+        if not clean:
+            return  # bare @-tag with no text — nothing to chat about
+
+        if len(clean) > 2000:
+            clean = clean[:2000]
+
+        db = context.bot_data["db"]
+        user_id = update.effective_user.id
+        user_row = await db.get_user(user_id)
+        if not user_row or not user_row["dm_registered"]:
+            return  # only registered participants get LLM time
+
+        try:
+            result = await chat_with_luke(clean, db, user_id, context=context)
+        except Exception as e:
+            logger.warning("group_mention_handler chat failed user=%d: %s", user_id, e)
+            return
+
+        # Group path is TEXT-ONLY. Skip media + DM-only side effects to avoid
+        # leaking private surfaces (transformation/timelapse/grid) into the group
+        # and to avoid no-op refreshes on a card the user can already see.
+        out = result.get("text") or ""
+        if not out:
+            return
+        try:
+            await msg.reply_text(out)
+        except Exception as e:
+            logger.warning("group_mention_handler reply failed: %s", e)
+
     # Track AI chat fallback: user sent a /command after AI chat (negative signal)
     async def ai_fallback_tracker(update: Update, context):
         """Detect when a user falls back to a /command after an AI chat response."""
@@ -344,6 +403,17 @@ def main() -> None:
             filters.TEXT & ~filters.COMMAND,
             combined_text_handler,
         )
+    )
+    # Group @-mention / reply-to-bot AI chat. Registered in handler-group 1 so
+    # it runs independently of combined_text_handler in group 0 — PTB only
+    # dispatches the first matching handler within a single group, but always
+    # runs handlers across all groups. Internal filter narrows to group chats.
+    app.add_handler(
+        MessageHandler(
+            (filters.ChatType.GROUPS) & filters.TEXT & ~filters.COMMAND,
+            group_mention_handler,
+        ),
+        group=1,
     )
 
     # Group join detection
