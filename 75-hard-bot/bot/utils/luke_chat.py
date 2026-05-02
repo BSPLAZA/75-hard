@@ -50,7 +50,7 @@ READ THESE FIRST. They override everything else below when they conflict.
    - If user says "did them" / "all done" / "I did it" without naming the task, call backfill_task for EACH unmarked task in this turn.
    - If user names some tasks specifically and is silent on others, act on the named ones and ASK about the rest in the same turn ("got it for water — and the workout?").
    - NEVER claim "your penance is set" / "marked as penance" without a successful declare_penance tool call in this turn. State claims about penance state must be backed by a tool call (this generalizes critical_rule 5).
-   - declare_penance only accepts penance-able tasks (workout_indoor, workout_outdoor, water, reading, photo). For diet violations (cheat / alcohol), the user's path is log_violation (different tool — diet is binary, no penance possible). If user says "I had wine" or "I cheated on diet" don't try declare_penance — that'll be denied.
+   - declare_penance only accepts penance-able tasks (workout_indoor, workout_outdoor, water, reading, photo). For diet violations (cheat / alcohol), the user's path is log_violation (different tool — diet is binary, no penance possible). If user says "I had wine" or "I cheated on diet" call log_violation (NOT declare_penance, NOT undo_diet alone). log_violation requires a `detail` arg — the freeform context for the squad to judge ("one glass of wine", "pizza slice"). If the user is vague ("I cheated"), ASK what specifically happened before calling. The case posts a poll to the group and the organizer renders verdict (pass / penance / fail).
 </critical_rules>
 
 THE CHALLENGE RULES (you enforce these):
@@ -436,6 +436,39 @@ TOOLS = [
                 },
             },
             "required": ["task"],
+        },
+    },
+    {
+        "name": "log_violation",
+        "description": (
+            "User confessed to a binary-task violation (currently: diet — alcohol or cheat meal). "
+            "Diet can't be penance'd (you can't 2× a missed meal), so the case goes to GROUP ARBITRATION: "
+            "Luke posts a poll in the group with options [pass, penance, fail], the squad votes, and "
+            "the organizer renders the final verdict. Creates a penance_log row with status='arbitration_pending'. "
+            "Triggers: 'I had wine', 'I cheated on diet', 'had a beer', 'had a cheat meal'. "
+            "missed_day defaults to today (most violations are real-time confessions). Pass an explicit "
+            "missed_day if user says 'yesterday' or names another day. Detail is the freeform context "
+            "(e.g., 'one glass of wine at dinner', 'pizza slice'). DO NOT use this for missed-but-not-violated "
+            "tasks — that's declare_penance for action tasks, or just acknowledge for diet (diet just stays unmarked)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "enum": ["diet"],
+                    "description": "Which binary task was violated. Currently only 'diet'.",
+                },
+                "missed_day": {
+                    "type": "integer",
+                    "description": "The day of the violation. Defaults to today. Pass explicitly if user names a past day.",
+                },
+                "detail": {
+                    "type": "string",
+                    "description": "Required. Freeform context for the squad to judge (e.g., 'glass of wine', 'pizza slice', 'birthday cake').",
+                },
+            },
+            "required": ["task", "detail"],
         },
     },
     {
@@ -1221,6 +1254,88 @@ async def _execute_tool(tool_name: str, tool_input: dict, db, user_id: int, cont
             f"DM the organizer to settle. /redeem available later."
         )
 
+    elif tool_name == "log_violation":
+        from bot.penance import BINARY_TASKS
+        from bot.config import GROUP_CHAT_ID
+
+        task = tool_input.get("task")
+        detail = (tool_input.get("detail") or "").strip()
+        if not task or task not in BINARY_TASKS:
+            return (
+                "DENIED: log_violation only handles binary-task violations (currently 'diet'). "
+                "For action-task misses, use declare_penance."
+            )
+        if not detail:
+            return "DENIED: log_violation requires a `detail` describing the violation for the group to judge."
+
+        missed_day = tool_input.get("missed_day")
+        if missed_day is None:
+            missed_day = day
+        else:
+            missed_day = int(missed_day)
+        if missed_day < 1 or missed_day > day:
+            return f"DENIED: invalid missed_day {missed_day} (today is day {day})."
+
+        # Don't double-arbitrate: one open arbitration per (user, missed_day, task).
+        existing = await db.get_penances_for_missed_day(user_id, missed_day)
+        for r in existing:
+            r = dict(r)
+            if r["task"] == task and r["status"] in ("in_progress", "arbitration_pending"):
+                return (
+                    f"DENIED: there's already an open case for {task} on day {missed_day} "
+                    "(arbitration pending or active penance). no double-filing."
+                )
+
+        # makeup_day = missed_day for arbitration rows (no makeup is happening, but
+        # the column is NOT NULL — we keep the schema unified by reusing missed_day).
+        retroactive = (missed_day < day)
+        detail_clean = detail[:300]
+        pid = await db.add_penance(
+            telegram_id=user_id,
+            missed_day=missed_day,
+            makeup_day=missed_day,
+            task=task,
+            retroactive=retroactive,
+            detail=detail_clean,
+            status="arbitration_pending",
+        )
+        await db.log_event(
+            user_id, None, "violation_logged",
+            f"day={missed_day} task={task} detail={detail_clean[:80]}",
+        )
+
+        # Send group poll if context + bot are available. In tests / offline,
+        # we still create the row so the admin can /admin_arbitrate manually.
+        if context is not None and getattr(context, "bot", None) is not None and GROUP_CHAT_ID:
+            try:
+                user_row = await db.get_user(user_id)
+                name = user_row["name"] if user_row else "someone"
+                question = f"{name} logged a {task} violation on day {missed_day}: {detail_clean}. verdict?"
+                # Telegram poll questions cap at 300 chars.
+                question = question[:295] + "..." if len(question) > 300 else question
+                poll_msg = await context.bot.send_poll(
+                    chat_id=GROUP_CHAT_ID,
+                    question=question,
+                    options=["pass", "penance", "fail"],
+                    is_anonymous=False,
+                    allows_multiple_answers=False,
+                )
+                poll_obj = poll_msg.poll
+                if poll_obj is not None:
+                    await db.attach_arbitration_poll(
+                        pid,
+                        poll_id=str(poll_obj.id),
+                        poll_message_id=poll_msg.message_id,
+                    )
+            except Exception as e:
+                logger.warning("Failed to send arbitration poll for penance %d: %s", pid, e)
+
+        return (
+            f"REFRESH_CARD: violation logged. case #{pid} for {task} day {missed_day}. "
+            f"posted to the group for vote. organizer renders the verdict — "
+            f"could be pass, penance, or fail."
+        )
+
     elif tool_name == "get_my_compliance_grid":
         return "MEDIA:compliance_grid"
 
@@ -1256,6 +1371,11 @@ _PHANTOM_TEXT_PATTERNS = [
     re.compile(r"\b(?:your\s+)?penance\s+(?:is\s+)?(?:set|marked|locked|active)\b", re.I),
     re.compile(r"\b(?:set\s+up|marked\s+as)\s+penance\b", re.I),
     re.compile(r"\bpenance\s+for\s+\w+\s+(?:set|locked|active)\b", re.I),
+    # Violation state claims: catch "case filed" / "logged the violation" /
+    # "posted to the group" without a log_violation tool call this turn.
+    re.compile(r"\b(?:case|violation)\s+(?:filed|logged|posted|opened)\b", re.I),
+    re.compile(r"\bposted\s+(?:it\s+)?to\s+the\s+group\b", re.I),
+    re.compile(r"\bsquad\s+(?:will|gets to|is)\s+vot", re.I),
 ]
 
 # Tool classes that legitimize a numerical state claim. If Luke claims a diet total,
@@ -1270,12 +1390,15 @@ _WATER_TOOLS = {
     "get_my_status", "get_my_status_for_day",
 }
 _PENANCE_TOOLS = {"declare_penance"}
+_VIOLATION_TOOLS = {"log_violation"}
 
 
 def _state_claim_pattern_class(matched_text: str) -> str:
     """Classify a matched state-claim snippet into a tool family
-    ('penance', 'water', or 'diet')."""
+    ('violation', 'penance', 'water', or 'diet')."""
     t = matched_text.lower()
+    if "case" in t or "violation" in t or "posted" in t or "vot" in t:
+        return "violation"
     if "penance" in t:
         return "penance"
     if "/16" in t or "cup" in t:
@@ -1299,7 +1422,9 @@ def _check_state_claims(text: str, tools_called: list[str]) -> tuple[str, str] |
         if not m:
             continue
         claim_class = _state_claim_pattern_class(m.group(0))
-        if claim_class == "penance":
+        if claim_class == "violation":
+            valid_tools = _VIOLATION_TOOLS
+        elif claim_class == "penance":
             valid_tools = _PENANCE_TOOLS
         elif claim_class == "water":
             valid_tools = _WATER_TOOLS

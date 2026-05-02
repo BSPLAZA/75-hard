@@ -16,6 +16,7 @@ from telegram.ext import (
 from bot.config import BOT_TOKEN, DATABASE_PATH, GROUP_CHAT_ID, ORGANIZER, PARTICIPANTS, USER_TIMEZONES
 from bot.database import Database
 from bot.handlers.admin import get_admin_handlers, get_fail_handler, get_redeem_handler
+from bot.handlers.arbitration import get_arbitration_poll_handler
 from bot.handlers.transformation import get_transformation_handler, get_timelapse_handler
 from bot.handlers.daily_card import get_card_command_handler
 from bot.handlers.diet import get_diet_callback_handler
@@ -349,6 +350,9 @@ def main() -> None:
     app.add_handler(
         ChatMemberHandler(handle_new_group, ChatMemberHandler.MY_CHAT_MEMBER)
     )
+
+    # Arbitration poll vote tracking
+    app.add_handler(get_arbitration_poll_handler())
 
     logger.info("Starting 75 Hard bot...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

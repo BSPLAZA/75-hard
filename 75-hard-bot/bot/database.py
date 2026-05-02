@@ -139,13 +139,29 @@ class Database:
                 resolved_at TEXT,
                 status TEXT NOT NULL DEFAULT 'in_progress',
                 retroactive INTEGER NOT NULL DEFAULT 0,
-                detail TEXT
+                detail TEXT,
+                poll_id TEXT,
+                poll_message_id INTEGER
             );
 
             CREATE INDEX IF NOT EXISTS idx_penance_user_day
                 ON penance_log(telegram_id, missed_day);
             CREATE INDEX IF NOT EXISTS idx_penance_status
                 ON penance_log(status);
+            CREATE INDEX IF NOT EXISTS idx_penance_poll
+                ON penance_log(poll_id);
+
+            CREATE TABLE IF NOT EXISTS arbitration_votes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                penance_id INTEGER NOT NULL,
+                voter_id INTEGER NOT NULL,
+                choice TEXT NOT NULL,
+                voted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(penance_id, voter_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_arb_votes_penance
+                ON arbitration_votes(penance_id);
             """
         )
         await self._conn.commit()
@@ -161,6 +177,8 @@ class Database:
             "ALTER TABLE users ADD COLUMN timezone TEXT",
             "ALTER TABLE users ADD COLUMN tone TEXT DEFAULT 'cardi'",
             "ALTER TABLE users ADD COLUMN payment_confirmed_day INTEGER",
+            "ALTER TABLE penance_log ADD COLUMN poll_id TEXT",
+            "ALTER TABLE penance_log ADD COLUMN poll_message_id INTEGER",
             "ALTER TABLE books ADD COLUMN cover_url TEXT",
             "CREATE TABLE IF NOT EXISTS bot_settings (key TEXT PRIMARY KEY, value TEXT)",
         ]
@@ -358,6 +376,73 @@ class Database:
             (telegram_id, missed_day),
         ) as cur:
             return await cur.fetchall()
+
+    async def attach_arbitration_poll(
+        self, penance_id: int, *, poll_id: str, poll_message_id: int,
+    ) -> None:
+        """Attach Telegram poll metadata to a penance row in arbitration."""
+        await self._conn.execute(
+            "UPDATE penance_log SET poll_id = ?, poll_message_id = ? WHERE id = ?",
+            (poll_id, poll_message_id, penance_id),
+        )
+        await self._conn.commit()
+
+    async def get_penance_by_poll_id(self, poll_id: str) -> aiosqlite.Row | None:
+        async with self._conn.execute(
+            "SELECT * FROM penance_log WHERE poll_id = ?", (poll_id,)
+        ) as cur:
+            return await cur.fetchone()
+
+    async def get_pending_arbitrations(self) -> list[aiosqlite.Row]:
+        """Penance rows awaiting admin verdict, oldest first."""
+        async with self._conn.execute(
+            """
+            SELECT * FROM penance_log
+            WHERE status = 'arbitration_pending'
+            ORDER BY id ASC
+            """
+        ) as cur:
+            return await cur.fetchall()
+
+    async def record_arbitration_vote(
+        self, penance_id: int, voter_id: int, choice: str,
+    ) -> None:
+        """Record (or update) a group member's vote on an arbitration.
+
+        Telegram poll_answer with empty option_ids = vote retracted, in which
+        case we delete the row. Otherwise insert/replace.
+        """
+        if not choice:
+            await self._conn.execute(
+                "DELETE FROM arbitration_votes WHERE penance_id = ? AND voter_id = ?",
+                (penance_id, voter_id),
+            )
+        else:
+            await self._conn.execute(
+                """
+                INSERT INTO arbitration_votes (penance_id, voter_id, choice)
+                VALUES (?, ?, ?)
+                ON CONFLICT(penance_id, voter_id) DO UPDATE SET
+                    choice = excluded.choice,
+                    voted_at = CURRENT_TIMESTAMP
+                """,
+                (penance_id, voter_id, choice),
+            )
+        await self._conn.commit()
+
+    async def get_arbitration_tally(self, penance_id: int) -> dict[str, int]:
+        """Aggregate votes for an arbitration penance: {choice: count}."""
+        async with self._conn.execute(
+            """
+            SELECT choice, COUNT(*) AS n
+            FROM arbitration_votes
+            WHERE penance_id = ?
+            GROUP BY choice
+            """,
+            (penance_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+        return {dict(r)["choice"]: dict(r)["n"] for r in rows}
 
     async def resolve_penance(self, id: int, status: str) -> None:
         """Mark a penance resolved. Status: 'recovered' | 'failed' | a verdict

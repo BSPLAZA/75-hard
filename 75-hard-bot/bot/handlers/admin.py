@@ -984,6 +984,8 @@ def get_admin_handlers() -> list:
         CommandHandler("admin_open_retro_audit", _admin_open_retro_audit_command),
         CommandHandler("admin_close_retro_audit", _admin_close_retro_audit_command),
         CommandHandler("admin_settle_failure", _admin_settle_failure_command),
+        CommandHandler("admin_arbitrations", _admin_arbitrations_command),
+        CommandHandler("admin_arbitrate", _admin_arbitrate_command),
     ]
 
 
@@ -1090,6 +1092,153 @@ async def _admin_close_retro_audit_command(update, context):
     db = context.bot_data["db"]
     await db.set_setting("retro_grace_until_day", "0")
     await _admin_reply(update, context, "Retro-edit grace window CLOSED. Only yesterday is editable now.")
+
+
+async def _admin_arbitrations_command(update, context):
+    """List pending arbitration cases with vote tallies.
+
+    Usage: /admin_arbitrations
+    """
+    if not _is_admin(update.effective_user.id):
+        await _admin_reply(update, context, "Admin only.")
+        return
+    db = context.bot_data["db"]
+    rows = await db.get_pending_arbitrations()
+    if not rows:
+        await _admin_reply(update, context, "No pending arbitrations.")
+        return
+
+    lines = ["Pending arbitrations:\n"]
+    for row in rows:
+        r = dict(row)
+        user = await db.get_user(r["telegram_id"])
+        name = dict(user)["name"] if user else f"id={r['telegram_id']}"
+        tally = await db.get_arbitration_tally(r["id"])
+        tally_str = " | ".join(f"{k}={v}" for k, v in sorted(tally.items())) or "no votes yet"
+        detail = (r.get("detail") or "").strip()
+        lines.append(
+            f"#{r['id']}: {name} — {r['task']} day {r['missed_day']}\n"
+            f"  detail: {detail}\n"
+            f"  votes: {tally_str}"
+        )
+    lines.append("\nTo resolve: /admin_arbitrate <id> <pass|penance|fail> [task_for_penance]")
+    await _admin_reply(update, context, "\n\n".join(lines))
+
+
+async def _admin_arbitrate_command(update, context):
+    """Render final verdict on an arbitration case.
+
+    Usage: /admin_arbitrate <id> <pass|penance|fail> [penance_task]
+
+    Verdicts:
+      pass      — no consequence, case dismissed (status='passed')
+      penance   — convert to in_progress penance row; supply penance_task arg
+                  (one of the action tasks to do 2× today). status='in_progress'.
+      fail      — user is out. status='failed' + group announcement (admin still
+                  triggers /admin_settle_failure for the residual payment flow).
+    """
+    if not _is_admin(update.effective_user.id):
+        await _admin_reply(update, context, "Admin only.")
+        return
+    if len(context.args) < 2:
+        await _admin_reply(
+            update, context,
+            "Usage: /admin_arbitrate <id> <pass|penance|fail> [penance_task]",
+        )
+        return
+
+    try:
+        pid = int(context.args[0])
+    except ValueError:
+        await _admin_reply(update, context, f"Bad id: {context.args[0]}")
+        return
+    verdict = context.args[1].lower()
+    if verdict not in ("pass", "penance", "fail"):
+        await _admin_reply(update, context, f"Bad verdict: {verdict}. Must be pass, penance, or fail.")
+        return
+
+    db = context.bot_data["db"]
+    row = await db.get_penance(pid)
+    if not row:
+        await _admin_reply(update, context, f"No arbitration #{pid} found.")
+        return
+    r = dict(row)
+    if r["status"] != "arbitration_pending":
+        await _admin_reply(
+            update, context,
+            f"#{pid} status is {r['status']!r} — not pending arbitration.",
+        )
+        return
+
+    user = await db.get_user(r["telegram_id"])
+    name = dict(user)["name"] if user else f"id={r['telegram_id']}"
+
+    from bot.utils.progress import get_current_challenge_day
+    today = await get_current_challenge_day(db)
+
+    if verdict == "pass":
+        await db.resolve_penance(pid, "passed")
+        await db.log_event(
+            r["telegram_id"], None, "arbitration_resolved",
+            f"id={pid} verdict=pass",
+        )
+        msg = f"case #{pid} for {name} dismissed. no fail, no penance. squad let it slide."
+    elif verdict == "penance":
+        from bot.penance import PENANCE_ABLE_TASKS
+        if len(context.args) < 3:
+            await _admin_reply(
+                update, context,
+                f"Verdict 'penance' requires a penance_task arg. "
+                f"Penance-able: {', '.join(sorted(PENANCE_ABLE_TASKS))}.",
+            )
+            return
+        penance_task = context.args[2]
+        if penance_task not in PENANCE_ABLE_TASKS:
+            await _admin_reply(
+                update, context,
+                f"Bad penance_task {penance_task!r}. Must be one of {sorted(PENANCE_ABLE_TASKS)}.",
+            )
+            return
+        # Resolve the arbitration row, then create a fresh in_progress penance
+        # row for today's makeup. Two rows = full audit trail.
+        await db.resolve_penance(pid, "passed")  # arbitration closed (passed-with-condition)
+        await db.add_penance(
+            telegram_id=r["telegram_id"],
+            missed_day=r["missed_day"],
+            makeup_day=today,
+            task=penance_task,
+            retroactive=False,
+            detail=f"arbitration #{pid} verdict=penance",
+            status="in_progress",
+        )
+        await db.log_event(
+            r["telegram_id"], None, "arbitration_resolved",
+            f"id={pid} verdict=penance task={penance_task}",
+        )
+        msg = (
+            f"case #{pid} for {name} → penance. doing 2× {penance_task.replace('_', ' ')} "
+            f"today (day {today}) to make it right."
+        )
+    else:  # fail
+        await db.resolve_penance(pid, "failed")
+        await db.log_event(
+            r["telegram_id"], None, "arbitration_resolved",
+            f"id={pid} verdict=fail",
+        )
+        msg = (
+            f"case #{pid} for {name} → fail. squad called it. "
+            f"run /admin_settle_failure {name} to wrap the residual payment."
+        )
+
+    # Group acknowledgement.
+    group_chat_id = context.bot_data.get("group_chat_id")
+    if group_chat_id:
+        try:
+            await context.bot.send_message(chat_id=group_chat_id, text=msg)
+        except Exception:
+            pass
+
+    await _admin_reply(update, context, f"Resolved.\n\n{msg}")
 
 
 def get_fail_handler() -> ConversationHandler:
